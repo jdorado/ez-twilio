@@ -8,7 +8,7 @@ assert.equal(manifest.version,pkg.version);
 assert.equal(pkg.name,'@jc_stack/ez-twilio');
 const [pack]=JSON.parse(execFileSync('npm',['pack','--dry-run','--ignore-scripts','--json'],{encoding:'utf8'}));
 const files=pack.files.map(file=>file.path);
-for(const required of ['LICENSE','THIRD_PARTY_NOTICES.md','README.md','SECURITY.md','CONTRIBUTING.md','CHANGELOG.md','Dockerfile','.dockerignore','ez-plugin.json','ez-deployment.json','bin/ez-twilio.mjs','skills/twilio/SKILL.md']) assert(files.includes(required),`Missing ${required}`);
+for(const required of ['LICENSE','THIRD_PARTY_NOTICES.md','README.md','SECURITY.md','CONTRIBUTING.md','CHANGELOG.md','Dockerfile','.dockerignore','ez-plugin.json','ez-deployment.json','pnpm-lock.yaml','bin/ez-twilio.mjs','skills/twilio/SKILL.md']) assert(files.includes(required),`Missing ${required}`);
 for(const file of files) assert(!/(^|\/)(node_modules|\.git|\.env|\.private)(\/|$)|\.(tgz|sqlite|log)$/.test(file),`Private package entry: ${file}`);
 assert.equal((await import('../src/cli.mjs')).main instanceof Function,true);
 console.log(JSON.stringify({name:pkg.name,version:pkg.version,files:files.length}));

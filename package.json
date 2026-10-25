@@ -1,13 +1,13 @@
 {
   "name": "@jc_stack/ez-twilio",
-  "version": "0.1.0-beta.1.rc.2",
+  "version": "0.1.0-beta.1.rc.3",
   "description": "Polling-only two-way Twilio SMS and durable receipts for Ez agents",
   "type": "module",
   "license": "MIT",
   "engines": {"node": ">=22.23.4"},
   "packageManager": "pnpm@10.30.3",
   "bin": {"ez-twilio": "bin/ez-twilio.mjs"},
-  "files": ["bin", "src", "skills", "test", "docker", "scripts/release-check.mjs", "Dockerfile", ".dockerignore", "ez-plugin.json", "ez-deployment.json", "README.md", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "pnpm-workspace.yaml"],
+  "files": ["bin", "src", "skills", "test", "docker", "scripts/release-check.mjs", "Dockerfile", ".dockerignore", "ez-plugin.json", "ez-deployment.json", "README.md", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "pnpm-workspace.yaml", "pnpm-lock.yaml"],
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "verify": "pnpm test && node --check src/cli.mjs && node --check src/service.mjs && node --check src/store.mjs",

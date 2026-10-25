@@ -27,6 +27,7 @@ The private stdin JSON contains `accountSid`, `sender` (E.164), and either
 `apiKeySid`/`apiKeySecret` or `authToken`. Prefer an API key with the required
 message/number access. Optional: `messagingServiceSid`, `startAt` (UTC ISO capture
 boundary, defaults to configuration time), `pollSeconds` (15–3600, default 60).
+Capture includes the whole boundary second because provider timestamps lack milliseconds.
 Credentials are never accepted as command flags or returned by diagnostics.
 Reconfiguration may rotate credentials but cannot change account, sender or
 capture boundary; a different identity requires a separate profile.

@@ -86,6 +86,13 @@ test('day-granular reads do not import or quarantine pre-activation redacted his
   assert.equal(result.complete,true);assert.equal(store.status().messages,1);assert.equal(store.status().quarantined,0);
 });
 
+test('second-precision provider timestamps retain SMS in the activation boundary second',async t=>{
+  const {store}=await fixture(t),provider=mock([raw(1,{date_created:new Date(NOW).toUTCString()})]);
+  const exactBoundary={...connection,startAt:new Date(NOW+500).toISOString()};
+  const result=await new Transport(store,exactBoundary,{provider,now:()=>NOW+1000}).sync();
+  assert.equal(result.complete,true);assert.equal(store.status().messages,1);
+});
+
 test('consumer acknowledgment is separate, monotonic and bound to the store generation',async t=>{
   const {store}=await fixture(t); await new Transport(store,connection,{provider:mock([raw(1)]),now:()=>NOW}).sync();
   const inbox=store.inbox(0,1);

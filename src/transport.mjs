@@ -18,7 +18,9 @@ export class Transport {
     return this.pendingSync;
   }
   async scan(maxPages) {
-    const now = this.now(), activation = Date.parse(this.connection.startAt);
+    // Twilio timestamps have second precision. Retain the whole boundary second
+    // so an SMS arriving just after init is not excluded by local milliseconds.
+    const now = this.now(), activation = Math.floor(Date.parse(this.connection.startAt) / 1000) * 1000;
     let scan = this.store.meta('scan');
     if (!scan) {
       const coverage = this.store.meta('coverage');

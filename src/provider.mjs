@@ -1,5 +1,5 @@
 import {fail} from './errors.mjs';
-import {phone, sid} from './validation.mjs';
+import {phone, sid, sender, senders} from './validation.mjs';
 
 const ORIGIN = 'https://api.twilio.com';
 export class Provider {
@@ -38,8 +38,8 @@ export class Provider {
       throw fail('PROVIDER_UNAVAILABLE', 'Twilio request interrupted; read back the existing operation before retrying a send', 5);
     }
   }
-  listPath(direction, startDate, endDate) {
-    const query = new URLSearchParams({[direction === 'inbound' ? 'To' : 'From']: this.connection.sender,
+  listPath(direction, startDate, endDate, from) {
+    const query = new URLSearchParams({[direction === 'inbound' ? 'To' : 'From']: sender(this.connection, from),
       'DateSent>=': startDate, 'DateSent<=': endDate, PageSize: '100'});
     return `${this.root}/Messages.json?${query}`;
   }
@@ -63,11 +63,14 @@ export class Provider {
       ...(payload.messagingServiceSid ? {MessagingServiceSid: payload.messagingServiceSid} : {})});
   }
   async doctor() {
-    const value = await this.request(`${this.root}/IncomingPhoneNumbers.json?${new URLSearchParams({PhoneNumber: this.connection.sender, PageSize: '20'})}`);
-    if (!Array.isArray(value.incoming_phone_numbers)) throw fail('PROVIDER_RESPONSE', 'Invalid sender readback');
-    const number = value.incoming_phone_numbers.find(row => row.phone_number === this.connection.sender && row.account_sid === this.connection.accountSid);
-    if (!number || number.capabilities?.sms !== true) throw fail('SENDER_UNAVAILABLE', 'Configured sender is not an SMS-capable number in this account', 4);
-    return {accountSid: this.connection.accountSid, sender: phone(number.phone_number), sms: true};
+    const numbers = senders(this.connection);
+    for (const from of numbers) {
+      const value = await this.request(`${this.root}/IncomingPhoneNumbers.json?${new URLSearchParams({PhoneNumber: from, PageSize: '20'})}`);
+      if (!Array.isArray(value.incoming_phone_numbers)) throw fail('PROVIDER_RESPONSE', 'Invalid sender readback');
+      const number = value.incoming_phone_numbers.find(row => row.phone_number === from && row.account_sid === this.connection.accountSid);
+      if (!number || number.capabilities?.sms !== true) throw fail('SENDER_UNAVAILABLE', 'Configured sender is not an SMS-capable number in this account', 4);
+    }
+    return {accountSid: this.connection.accountSid, senders: numbers, ...(numbers.length === 1 ? {sender: numbers[0]} : {}), sms: true};
   }
 }
 
@@ -93,7 +96,7 @@ export function message(raw, connection, now = Date.now()) {
       !['inbound', 'outbound-api', 'outbound-call', 'outbound-reply'].includes(raw.direction)) throw fail('PROVIDER_RESPONSE', 'Invalid message identity');
   const from = phone(raw.from), to = phone(raw.to);
   const inbound = raw.direction === 'inbound';
-  if ((inbound ? to : from) !== connection.sender) throw fail('PROVIDER_RESPONSE', 'Message is outside the configured sender');
+  if (!senders(connection).includes(inbound ? to : from)) throw fail('PROVIDER_RESPONSE', 'Message is outside the configured senders');
   if (typeof raw.body !== 'string' || raw.body.length > 32000 || !Number.isFinite(Date.parse(raw.date_created)) ||
       !/^[a-z_]{1,32}$/.test(raw.status) || !/^\d{1,3}$/.test(String(raw.num_media ?? 0))) throw fail('PROVIDER_RESPONSE', 'Invalid message fields');
   return {id: raw.sid, accountSid: raw.account_sid, from, to, direction: raw.direction, body: raw.body,

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.8 — unpublished candidate
+
+Multiple configured numbers in one account/container, caller-selected `send
+--from`, and durable polling progress across every number in both directions.
+Native conversation addresses include our number when several are configured,
+keeping the same remote contact's line-specific watches and replies separate.
+Existing single-number configuration and operation receipts remain compatible.
+Numbers can be added without losing the journal; capture restarts from activation
+and native attention must be rebound. No rotation, daily-cap or selection policy
+is implemented in the plugin. Multi-number configuration requires this version
+or newer; older RCs cannot load it. SQL state schema remains 1.
+
 ## 0.1.0-beta.1.rc.7 — unpublished candidate
 
 Standard public contribution and release instructions, PR template, pinned shared

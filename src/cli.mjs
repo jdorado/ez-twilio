@@ -14,9 +14,9 @@ export async function main(argv, options = {}) {
   if (!command || command === '--help') return {commands: [
     'init < private-connection.json', 'doctor', 'status', 'sync [--max-pages 1..200]',
     'inbox [--after CURSOR --generation STORE_GENERATION] [--limit 1..100]', 'acknowledge --consumer NAME --cursor CURSOR --generation ID',
-    'message get MESSAGE_SID', 'send --to E164 --text TEXT --key KEY [--preview]', 'operation --key KEY',
+    'message get MESSAGE_SID', 'send [--from OUR_E164] --to E164 --text TEXT --key KEY [--preview]', 'operation --key KEY',
     'backup', 'recovery acknowledge --reference OWNER_RECONCILIATION',
-  ], configuration: {required: ['accountSid','sender'], credentials: 'apiKeySid + apiKeySecret, or authToken; stdin only', optional: ['messagingServiceSid','startAt','pollSeconds']},
+  ], configuration: {required: ['accountSid','sender or senders[]'], credentials: 'apiKeySid + apiKeySecret, or authToken; stdin only', optional: ['messagingServiceSid','startAt','pollSeconds'], senders: 'Multiple configured numbers share one poller. Select --from when more than one is configured; selection policy belongs to the caller.'},
     transport: 'One managed Docker service polls independently. No webhooks. Keep the operation key after uncertainty; never retry with a new key.',
     exitCodes: {0:'ok',1:'internal',2:'invalid input or provider error',3:'auth/account',4:'refused',5:'uncertain send/service response'}};
   if (command === '--version' && !rest.length) return {version: pkg.version};
@@ -33,7 +33,7 @@ export async function main(argv, options = {}) {
   else if (command === 'message' && rest[0] === 'get' && rest.length === 2) values.id = rest[1];
   else if (command === 'inbox') values = flags(rest, {after:'number',limit:'number',generation:'string'});
   else if (command === 'sync') { const parsed = flags(rest, {'max-pages':'number'}); values = {maxPages: parsed['max-pages']}; }
-  else if (command === 'send') values = flags(rest, {to:'string',text:'string',key:'string',preview:'boolean'});
+  else if (command === 'send') values = flags(rest, {from:'string',to:'string',text:'string',key:'string',preview:'boolean'});
   else if (command === 'operation') values = flags(rest,{key:'string'});
   else if (command === 'acknowledge') values = flags(rest,{consumer:'string',cursor:'number',generation:'string'});
   else if (command === 'recovery' && rest[0] === 'acknowledge') { name = 'recovery-acknowledge'; values = flags(rest.slice(1),{reference:'string'}); }

@@ -129,5 +129,7 @@ made for messages not received by Twilio or copies deleted everywhere.
 ## Development
 
 `pnpm install --frozen-lockfile`, `pnpm verify`, `pnpm release:check`.
+For an extracted npm archive, first copy `docker/pnpm-lock.yaml` to
+`pnpm-lock.yaml`; npm excludes root pnpm lockfiles from packages.
 Run the Docker manager smoke with `EZ_CORE_SOURCE=/reviewed/ez-agents pnpm
 smoke:manager`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

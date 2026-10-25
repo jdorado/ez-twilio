@@ -27,17 +27,27 @@ ez twilio init < /private/twilio-connection.json
 ez twilio doctor
 ```
 
-The private stdin JSON contains `accountSid`, `sender` (E.164), and either
+The private stdin JSON contains `accountSid`, either `sender` (one E.164 number)
+or `senders` (an array of unique E.164 numbers), and either
 `apiKeySid`/`apiKeySecret` or `authToken`. Prefer an API key with the required
 message/number access. Optional: `messagingServiceSid`, `startAt` (UTC ISO capture
 boundary, defaults to configuration time), `pollSeconds` (15–3600, default 60).
 Capture includes the whole boundary second because provider timestamps lack milliseconds.
 Credentials are never accepted as command flags or returned by diagnostics.
-Reconfiguration may rotate credentials but cannot change account, sender or
-capture boundary; a different identity requires a separate profile.
+One container polls every configured number in both directions. The caller
+selects the number for each send with `--from`; it is required when more than
+one number is configured. Existing single-number configuration and sends work
+unchanged. Sender selection and usage policy belong to the caller.
+
+Reconfiguration may rotate credentials or add numbers. Account and capture
+boundary remain fixed, and existing numbers cannot be removed from this profile.
+Adding numbers retains all correspondence, operation receipts and consumer
+cursors, restarts capture from the activation boundary, and clears native watches.
+Rebind source/task authority against the new account identity before native use.
+A different account, capture boundary or reduced number set needs a separate profile.
 
 `doctor` performs an authenticated read and verifies that the intended sender
-is SMS-capable and belongs to this account. This proves read access and binding,
+is SMS-capable and belongs to this account, for every configured number. This proves read access and binding,
 not delivery or regulatory readiness. It does not change Twilio number routing.
 Use an authorized test phone and a sender ready for the intended destination
 before a live send.
@@ -48,15 +58,16 @@ before a live send.
 ez twilio sync --max-pages 20
 ez twilio inbox --after 0 --limit 20
 ez twilio acknowledge --consumer crm --cursor 42 --generation STORE_GENERATION
-ez twilio send --to +15551234567 --text 'Authorized test' --key test:1 --preview
-ez twilio send --to +15551234567 --text 'Authorized test' --key test:1
+ez twilio send --from +15551230001 --to +15551234567 --text 'Authorized test' --key test:1 --preview
+ez twilio send --from +15551230001 --to +15551234567 --text 'Authorized test' --key test:1
 ez twilio operation --key test:1
 ez twilio message get SM00000000000000000000000000000000
 ez twilio status
 ```
 
 Reads and writes print JSON. One send accepts 1–1600 characters. Reusing a key
-with the identical payload reads its receipt; changing the payload is refused.
+with the identical payload reads its receipt; changing the payload, including
+the sending number, is refused.
 A timeout, process death or missing create response leaves the reserved operation
 `uncertain` and is never automatically resubmitted. HTTP create requests have no
 automatic retry. Polling can find similar messages but cannot prove which local
@@ -71,7 +82,7 @@ consumer cursor. Nonzero reads require `--generation STORE_GENERATION` from the
 first page; stale generations and cursors beyond this store fail.
 Acknowledging/releasing events does not delete the underlying correspondence.
 
-The poller follows every provider page in both directions, persisting progress
+The poller follows every provider page in both directions for each number, persisting progress
 with captured records. A bounded `sync` may report `complete:false`; background
 capture continues that scan. Failed pages never mark coverage complete. Regular
 scans overlap two days; daily full scans cover the configured activation boundary.
@@ -89,11 +100,16 @@ The protected socket `/plugins/twilio/service.sock` implements Ez's ordinary
 `events-release`, `task-watch`, `task-unwatch`, `task-send`. The private IPC volume
 must be mounted and registered by the owning installation, using the standard Ez
 source administration command. A plugin manifest or captured SMS is not a grant.
-Account identity includes Account SID, our configured sender and store generation; a conversation
-is the remote E.164 number under that binding. Exact-contact watches gate native
+Account identity binds Account SID, the configured number set and store generation.
+With one configured number, the conversation ID remains the remote E.164 number.
+With multiple numbers, it is `OUR_E164:REMOTE_E164`, for example
+`+15551230001:+15551234567`. The local number is part of the address: native
+events and task sends use that exact pair, including when one remote contact
+texts two of our numbers. Exact-contact watches gate native
 events and task sends. Unwatched correspondence is retained in the inbox but does
 not wake the owner session. Task expiry/revocation, execution and context belong
 to core; the plugin does not run an agent or import app logic.
+Native task replies use the local number in their bound conversation address.
 
 For a domain app, consume the same journal and keep its matching, contact limits
 and canonical timeline in the app. Do not give a restricted domain task a general
@@ -150,7 +166,7 @@ the plugin; the explicit core checkout is only an integration-test input.
 | Result | Next action |
 | --- | --- |
 | Service unavailable | Read `ez plugins status twilio`, start the service, then run `ez twilio doctor --json`. Socket health alone does not prove account readiness. |
-| Account/sender mismatch | Verify the intended Twilio account and owned SMS-capable sender. Use a separate profile for a different identity; do not edit its journal binding. |
+| Account/sender mismatch | Verify the intended account and configured SMS-capable numbers. Use `--from` for a multi-number send. Account/boundary changes or removing numbers require a separate profile; do not edit its journal binding. |
 | Incomplete coverage or quarantine | Inspect `ez twilio status` and bounded `sync` output. Retain private evidence and resolve the reported gap before treating catch-up as complete. |
 | Uncertain send | Read `operation --key KEY` and reconcile the original operation. A new key or a missing history match is not evidence that it was never sent. |
 | Cursor mismatch after restore | Read the new generation from `inbox --after 0`; explicitly replay and rebind native attention. Complete restore reconciliation before allowing new sends. |

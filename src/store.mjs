@@ -4,6 +4,7 @@ import {open, rename, unlink} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash, randomUUID} from 'node:crypto';
 import {fail} from './errors.mjs';
+import {senders} from './validation.mjs';
 
 export const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const json = value => value === undefined ? null : JSON.stringify(value);
@@ -40,11 +41,22 @@ export class Store {
   }
   meta(name) { return read(this.db.prepare('SELECT value FROM meta WHERE key=?').get(name)); }
   setMeta(name, value) { this.db.prepare('INSERT INTO meta VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(name, json(value)); }
-  binding(connection) {
-    const identity = {accountSid: connection.accountSid, sender: connection.sender, startAt: connection.startAt};
+  binding(connection, commit = true) {
+    const numbers = senders(connection);
+    const identity = {accountSid: connection.accountSid, ...(numbers.length === 1 ? {sender: numbers[0]} : {senders: numbers}), startAt: connection.startAt};
     const old = this.meta('binding');
-    if (old && hash(old) !== hash(identity)) throw fail('ACCOUNT_MISMATCH', 'Use a separate plugin profile for a different account, sender or capture boundary', 3);
-    this.setMeta('binding', identity);
+    if (old && (old.accountSid !== identity.accountSid || old.startAt !== identity.startAt || senders(old).some(number => !numbers.includes(number))))
+      throw fail('ACCOUNT_MISMATCH', 'Use a separate plugin profile for a different account, removed sender or capture boundary', 3);
+    if (!commit) return;
+    this.transaction(() => {
+      if (old && hash(old) !== hash(identity)) {
+        // Added numbers need complete capture from activation and fresh native grants.
+        // Retain all correspondence, send receipts and consumer positions.
+        this.setMeta('scan', null); this.setMeta('coverage', null);
+        this.db.exec('DELETE FROM watch');
+      }
+      this.setMeta('binding', identity);
+    });
   }
   getMessage(id) { return read(this.db.prepare('SELECT value FROM message WHERE id=?').get(id)); }
   capture(row) {

@@ -1,6 +1,7 @@
 import {Provider, message} from './provider.mjs';
 import {fail, publicError} from './errors.mjs';
-import {integer, key, phone, sendInput} from './validation.mjs';
+import {integer, key, phone, sender, senders, sendInput} from './validation.mjs';
+import {hash} from './store.mjs';
 
 const DAY = 86400000;
 export class Transport {
@@ -26,8 +27,11 @@ export class Transport {
       const coverage = this.store.meta('coverage');
       const full = !coverage?.fullAt || now - Date.parse(coverage.fullAt) >= DAY;
       const since = full ? activation : Math.max(activation, Date.parse(coverage.completedThrough) - 2 * DAY);
-      scan = {since, until: now, full, direction: 'inbound', path: this.provider.listPath('inbound', date(since), date(now)), pages: 0, gaps: 0};
+      const from = senders(this.connection)[0];
+      scan = {since, until: now, full, sender: from, direction: 'inbound', path: this.provider.listPath('inbound', date(since), date(now), from), pages: 0, gaps: 0};
     }
+    // Existing single-number checkpoints did not include this field.
+    scan.sender ??= senders(this.connection)[0];
     let inspected = 0, captured = 0, pages = 0;
     try {
       let gaps = scan.gaps ?? 0;
@@ -47,13 +51,16 @@ export class Transport {
                  scan.direction === 'outbound' && raw.direction === 'inbound')) continue;
             const row = message(raw, this.connection, this.now());
             if ((row.direction === 'inbound') !== (scan.direction === 'inbound')) throw fail('PROVIDER_RESPONSE', 'Message page direction mismatch');
+            if ((row.direction === 'inbound' ? row.to : row.from) !== scan.sender) throw fail('PROVIDER_RESPONSE', 'Message page sender mismatch');
             if (Date.parse(row.createdAt) >= activation && Date.parse(row.createdAt) <= scan.until) rows.push({row, raw});
           } catch (error) { this.store.quarantine(raw, publicError(error).code); gaps++; }
         }
         inspected += page.messages.length;
         if (page.next === scan.path) throw fail('PROVIDER_RESPONSE', 'Provider pagination did not advance');
+        const nextSender = senders(this.connection)[senders(this.connection).indexOf(scan.sender) + 1];
         const next = page.next ? {...scan, path: page.next, pages: scan.pages + 1}
-          : scan.direction === 'inbound' ? {...scan, direction: 'outbound', path: this.provider.listPath('outbound', date(scan.since), date(scan.until)), pages: scan.pages + 1} : null;
+          : scan.direction === 'inbound' ? {...scan, direction: 'outbound', path: this.provider.listPath('outbound', date(scan.since), date(scan.until), scan.sender), pages: scan.pages + 1}
+          : nextSender ? {...scan, sender: nextSender, direction: 'inbound', path: this.provider.listPath('inbound', date(scan.since), date(scan.until), nextSender), pages: scan.pages + 1} : null;
         captured += this.store.transaction(() => {
             let count = 0;
             for (const {row,raw} of rows) {
@@ -124,25 +131,39 @@ export class Transport {
       return operation;
     }
   }
-  accountId() { return `${this.connection.accountSid}:${this.connection.sender}:${this.store.meta('generation')}`; }
+  accountId() {
+    const numbers = senders(this.connection);
+    return `${this.connection.accountSid}:${numbers.length === 1 ? numbers[0] : `pool-${hash(numbers).slice(0,32)}`}:${this.store.meta('generation')}`;
+  }
   checkAccount(args) {
     if (args.accountId !== this.accountId()) throw fail('ACCOUNT_MISMATCH', 'Task is bound to another account or sender', 3);
   }
   watch(args) {
     this.checkAccount(args);
-    const conversation = phone(args.conversationId), now = this.now();
+    const conversation = this.conversation(args.conversationId), now = this.now();
     if (!Number.isFinite(args.expiresAt) || args.expiresAt <= now || args.expiresAt > now + 72 * 3600000 && args.expiresAt !== 8640000000000000) throw fail('INVALID_INPUT', 'Invalid task watch expiry');
-    return this.store.watch(conversation, args.expiresAt, now);
+    return this.store.watch(conversation.id, args.expiresAt, now);
+  }
+  conversationId(from, to) { return senders(this.connection).length === 1 ? to : `${from}:${to}`; }
+  conversation(value) {
+    if (senders(this.connection).length === 1) return {id: phone(value), from: sender(this.connection), to: value};
+    if (typeof value !== 'string' || value.split(':').length !== 2) throw fail('INVALID_INPUT', 'Use OUR_E164:REMOTE_E164 for a multi-number conversation');
+    const [from, to] = value.split(':');
+    return {id: value, from: sender(this.connection, from), to: phone(to)};
+  }
+  unwatch(args) {
+    this.checkAccount(args);
+    return this.store.unwatch(this.conversation(args.conversationId).id);
   }
   eligible(event) {
     if (event.kind !== 'message' || event.message.direction !== 'inbound' || this.store.meta(`released:${event.id}`)) return false;
-    const watch = this.store.watches().find(row => row.conversation === event.message.from);
+    const watch = this.store.watches().find(row => row.conversation === this.conversationId(event.message.to, event.message.from));
     return watch && watch.expiresAt > this.now() && event.seq > watch.floor && Date.parse(event.message.createdAt) >= watch.since - 1000;
   }
   sourceEvent(event) {
     const row = event.message;
     const text = [...row.body].slice(0,1600).join('');
-    return {id: event.id, conversationId: row.from, receivedAt: Date.parse(row.capturedAt),
+    return {id: event.id, conversationId: this.conversationId(row.to, row.from), receivedAt: Date.parse(row.capturedAt),
       text: JSON.stringify({messageId: row.id, from: row.from, to: row.to, text,
         ...(text !== row.body ? {truncated: true} : {}), unsupported: row.unsupported, mediaCount: row.mediaCount})};
   }
@@ -171,11 +192,11 @@ export class Transport {
   }
   async taskSend(args) {
     this.checkAccount(args);
-    const to = phone(args.conversationId);
-    const watch = this.store.watches().find(row => row.conversation === to && row.expiresAt > this.now());
+    const conversation = this.conversation(args.conversationId);
+    const watch = this.store.watches().find(row => row.conversation === conversation.id && row.expiresAt > this.now());
     if (!watch) throw fail('TASK_EXPIRED', 'Task attention is absent or expired', 3);
-    const operation = await this.send({to, text: args.text, key: key(args.key)});
-    return {accountId: this.accountId(), conversationId: to, key: operation.key,
+    const operation = await this.send({from: conversation.from, to: conversation.to, text: args.text, key: key(args.key)});
+    return {accountId: this.accountId(), conversationId: conversation.id, key: operation.key,
       state: ['accepted','sent','delivered'].includes(operation.state) ? 'accepted' : 'uncertain', receiptId: operation.providerMessageId};
   }
 }

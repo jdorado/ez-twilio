@@ -2,7 +2,7 @@
 
 Follow CONTRIBUTING.md in an isolated worktree and reviewed PR. Public source,
 catalog registration and a publishing workflow do not establish a release.
-`0.1.0-beta.1.rc.7` is an unpublished QA candidate. RC versions are never tagged
+`0.1.0-beta.1.rc.8` is an unpublished QA candidate. RC versions are never tagged
 or published; the first intended public version is `0.1.0-beta.1`, subject to
 fresh registry/tag readback. Never overwrite a published version.
 
@@ -83,8 +83,12 @@ reconciliation before retry; never overwrite a version or silently repair tags.
 ## Compatibility and rollback
 
 Schema 1 retains private credentials, messages, watch/cursor generations and
-send-operation receipts in the managed volumes. This preparation changes no CLI
-or data format. Back up before an upgrade; roll back compatible package code
+send-operation receipts in the managed volumes. The multi-number feature adds
+`senders[]`, explicit `send --from`, and paired native addresses for multi-number
+profiles; single-number configuration and receipts remain compatible. Adding
+numbers resets capture coverage and native attention while retaining the journal.
+Earlier RCs cannot load multi-number configuration; retain compatible package code
+once that feature is enabled. Back up before an upgrade; roll back compatible code
 without deleting provider state. Restoring an older journal requires the sending
 barrier, replay/rebinding and post-snapshot reconciliation in README.md.
 Uninstall preserves volumes; credential revocation is a separate account action.

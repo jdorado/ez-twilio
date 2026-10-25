@@ -4,7 +4,7 @@ import {dirname, join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {Store} from './store.mjs';
 import {Transport} from './transport.mjs';
-import {config, integer, key, phone} from './validation.mjs';
+import {config, integer, key, senders} from './validation.mjs';
 import {fail, publicError} from './errors.mjs';
 
 export async function serve(options = {}) {
@@ -19,7 +19,7 @@ export async function serve(options = {}) {
   let store, server;
   try {
   store = new Store(directory);
-  let transport, timer, closed = false, errors = 0, writingBackup = false;
+  let transport, timer, closed = false, errors = 0, writingBackup = false, initializing = false;
   const active = new Set();
   const now = options.now ?? Date.now;
   async function load() {
@@ -35,7 +35,7 @@ export async function serve(options = {}) {
   await load();
   const required = () => { if (!transport) throw fail('NOT_CONFIGURED', 'Initialize the plugin privately before provider operations', 3); return transport; };
   async function tick() {
-    if (closed) return;
+    if (closed || initializing) return;
     clearTimeout(timer);
     let delay = (transport?.connection.pollSeconds ?? 60) * 1000;
     try {
@@ -46,16 +46,23 @@ export async function serve(options = {}) {
   }
   async function call(command, args = {}) {
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail('INVALID_INPUT', 'Expected command arguments');
+    if (initializing && !['health','status','inbox','operation'].includes(command)) throw fail('BUSY', 'Configuration is being updated');
     if (command === 'health') return {service: 'ready'};
     if (command === 'status') return {configured: Boolean(transport), pollSeconds: transport?.connection.pollSeconds ?? 60, ...store.status()};
     if (command === 'init') {
-      const prior = transport?.connection;
-      const connection = config({...args.configuration, ...(args.configuration?.startAt === undefined && prior ? {startAt: prior.startAt} : {})}, now());
-      store.binding(connection);
-      await atomicPrivate(connectionFile, connection);
-      transport = new Transport(store, connection, {now, ...(options.provider ? {provider: options.provider(connection)} : {})});
-      clearTimeout(timer); timer = setTimeout(() => void tick(), 0);
-      return {configured: true, accountSid: connection.accountSid, sender: connection.sender, startAt: connection.startAt, pollSeconds: connection.pollSeconds};
+      initializing = true; clearTimeout(timer);
+      try {
+        await transport?.pendingSync?.catch(() => {});
+        const prior = transport?.connection;
+        const connection = config({...args.configuration, ...(args.configuration?.startAt === undefined && prior ? {startAt: prior.startAt} : {})}, now());
+        store.binding(connection, false);
+        // A crash after the file commit resumes binding/catch-up during load.
+        await atomicPrivate(connectionFile, connection);
+        store.binding(connection);
+        transport = new Transport(store, connection, {now, ...(options.provider ? {provider: options.provider(connection)} : {})});
+        const numbers = senders(connection);
+        return {configured: true, accountSid: connection.accountSid, senders: numbers, ...(numbers.length === 1 ? {sender: numbers[0]} : {}), startAt: connection.startAt, pollSeconds: connection.pollSeconds};
+      } finally { initializing = false; clearTimeout(timer); timer = setTimeout(() => void tick(), 0); }
     }
     if (command === 'inbox') return store.inbox(integer(args.after ?? 0,0,Number.MAX_SAFE_INTEGER,'cursor'), integer(args.limit ?? 20,1,100,'limit'), args.generation);
     if (command === 'acknowledge') return store.acknowledge(key(args.consumer), integer(args.cursor,0,Number.MAX_SAFE_INTEGER,'cursor'), args.generation);
@@ -87,7 +94,7 @@ export async function serve(options = {}) {
     if (command === 'events-check') return current.check(args.ids);
     if (command === 'events-release') { current.check(args.ids); return store.release(args.ids); }
     if (command === 'task-watch') return current.watch(args);
-    if (command === 'task-unwatch') { current.checkAccount(args); return store.unwatch(phone(args.conversationId)); }
+    if (command === 'task-unwatch') return current.unwatch(args);
     if (command === 'task-send') return current.taskSend(args);
     throw fail('INVALID_INPUT', 'Unknown command; read --help');
   }

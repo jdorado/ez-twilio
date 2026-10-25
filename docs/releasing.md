@@ -12,7 +12,7 @@ fresh registry/tag readback. Never overwrite a published version.
    state schema 1 unless a reviewed migration is supplied. Use a new RC after
    substantive QA fixes. Review Git history and the npm allowlist for private data.
 2. Run frozen pnpm installation, `pnpm verify`, `pnpm release:check`,
-   `git diff --check` and `npm audit --omit=dev`. Review dependency licenses;
+   `git diff --check` and `pnpm audit --prod`. Review dependency licenses;
    never run an automatic audit fix. Refresh `docker/pnpm-lock.yaml` whenever
    the source lock changes. Node's bundled components retain upstream notices.
 3. Build Docker `test` and `runtime` targets. Run `EZ_CORE_SOURCE=/absolute/reviewed-ez-agents

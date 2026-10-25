@@ -6,6 +6,7 @@ provider mechanics here; inference and conversation execution belong to the
 native engine, authority and lifecycle to Ez, domain policy to its owning app.
 
 Run `pnpm install --frozen-lockfile`, `pnpm verify`, `pnpm release:check`,
+`docker build --target test -t ez-twilio:test .`,
 `docker build --target runtime -t ez-twilio:check .` and `git diff --check`.
 Authority, credential, state and uncertain-write changes need focused negative
 tests. The Docker manager smoke is `EZ_CORE_SOURCE=/reviewed/ez-agents pnpm
@@ -22,3 +23,8 @@ An interrupted external write stays uncertain until reconciled. Never add a new
 operation key, fallback provider or callback to make a failure appear successful.
 Public instructions work without a maintainer's workspace. No customer records,
 credentials, account exports, native transcripts or private QA belong in Git.
+
+Public release preparation and publication follow [docs/releasing.md](docs/releasing.md).
+A maintainer request to release authorizes its merge and publication; a request
+to implement, install or normalize a plugin authorizes the contribution loop only.
+Use the pinned shared publisher rather than adding a per-plugin publisher.

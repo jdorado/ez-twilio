@@ -10,14 +10,18 @@ Package: `@jc_stack/ez-twilio`. Source: [jdorado/ez-twilio](https://github.com/j
 This is an unpublished release candidate. Install reviewed source by its inspected
 hash; do not assume an npm version or public release exists. Requires Node
 22.23.4+ (including built-in SQLite) and an Ez manager supporting deployment v2.
+Docker with Compose v2 is required. The public catalog is discovery metadata.
+Install under the owning agent's authority using inspected source or a verified release.
 
 ## Install and configure
 
 Use the owning agent's existing reviewed plugin registry:
 
 ```sh
-ez plugins inspect twilio --source /reviewed/ez-twilio
-ez plugins install twilio --source /reviewed/ez-twilio --revision sha256:INSPECTED_HASH
+git clone https://github.com/jdorado/ez-twilio.git /absolute/ez-twilio
+# Select a reviewed commit before inspecting; use the returned hash below.
+ez plugins inspect twilio --source /absolute/ez-twilio
+ez plugins install twilio --source /absolute/ez-twilio --revision sha256:INSPECTED_HASH
 ez plugins start twilio
 ez twilio init < /private/twilio-connection.json
 ez twilio doctor
@@ -133,4 +137,20 @@ made for messages not received by Twilio or copies deleted everywhere.
 For an extracted npm archive, first copy `docker/pnpm-lock.yaml` to
 `pnpm-lock.yaml`; npm excludes root pnpm lockfiles from packages.
 Run the Docker manager smoke with `EZ_CORE_SOURCE=/reviewed/ez-agents pnpm
-smoke:manager`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+smoke:manager`. It uses disposable synthetic state and a fixture provider; live
+account verification is separate. An owner-authorized installed-path exchange
+has verified polling capture, native restricted execution and a delivered SMS
+response. Native core crash recovery remains a separate requirement.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
+[release process](docs/releasing.md). No maintainer workspace is needed to use
+the plugin; the explicit core checkout is only an integration-test input.
+
+## Troubleshooting
+
+| Result | Next action |
+| --- | --- |
+| Service unavailable | Read `ez plugins status twilio`, start the service, then run `ez twilio doctor --json`. Socket health alone does not prove account readiness. |
+| Account/sender mismatch | Verify the intended Twilio account and owned SMS-capable sender. Use a separate profile for a different identity; do not edit its journal binding. |
+| Incomplete coverage or quarantine | Inspect `ez twilio status` and bounded `sync` output. Retain private evidence and resolve the reported gap before treating catch-up as complete. |
+| Uncertain send | Read `operation --key KEY` and reconcile the original operation. A new key or a missing history match is not evidence that it was never sent. |
+| Cursor mismatch after restore | Read the new generation from `inbox --after 0`; explicitly replay and rebind native attention. Complete restore reconciliation before allowing new sends. |

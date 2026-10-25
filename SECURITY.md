@@ -1,7 +1,8 @@
 # Security
 
-Report suspected vulnerabilities privately through the repository's GitHub
-security advisory workflow. Do not publish account keys, phone records or SMS.
+Report suspected vulnerabilities through
+[private GitHub advisories](https://github.com/jdorado/ez-twilio/security/advisories/new).
+Do not publish account keys, phone records or SMS.
 
 This plugin uses authenticated HTTPS reads and creates against api.twilio.com,
 with redirects disabled and pagination bound to the configured account. It has

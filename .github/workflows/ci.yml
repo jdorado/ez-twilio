@@ -19,4 +19,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
       - run: pnpm release:check
+      - run: docker build --target test -t ez-twilio:test .
       - run: docker build --target runtime -t ez-twilio:ci .

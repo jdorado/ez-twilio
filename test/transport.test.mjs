@@ -93,6 +93,14 @@ test('second-precision provider timestamps retain SMS in the activation boundary
   assert.equal(result.complete,true);assert.equal(store.status().messages,1);
 });
 
+test('To/From listing does not mistake another owned line outbound copy for our incoming SMS',async t=>{
+  const {store}=await fixture(t),provider=mock();
+  provider.page=async path=>({messages:new URL(path,'https://api.twilio.com').searchParams.has('To')
+    ?[raw(1),outgoing(2,{from:'+15551230003',to:sender})]:[],next:null});
+  const result=await new Transport(store,connection,{provider,now:()=>NOW}).sync();
+  assert.equal(result.complete,true);assert.equal(store.status().messages,1);assert.equal(store.status().quarantined,0);
+});
+
 test('consumer acknowledgment is separate, monotonic and bound to the store generation',async t=>{
   const {store}=await fixture(t); await new Transport(store,connection,{provider:mock([raw(1)]),now:()=>NOW}).sync();
   const inbox=store.inbox(0,1);

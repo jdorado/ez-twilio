@@ -40,6 +40,11 @@ export class Transport {
             // installation's activation boundary are not a historical import.
             const sourceTime = Date.parse(raw?.date_created);
             if (Number.isFinite(sourceTime) && (sourceTime < activation || sourceTime > scan.until)) continue;
+            // To/From filters do not filter direction: another number in this
+            // account may send to ours. Its outbound copy is not our inbound SMS.
+            if (raw?.account_sid === this.connection.accountSid &&
+                (scan.direction === 'inbound' && ['outbound-api','outbound-call','outbound-reply'].includes(raw.direction) ||
+                 scan.direction === 'outbound' && raw.direction === 'inbound')) continue;
             const row = message(raw, this.connection, this.now());
             if ((row.direction === 'inbound') !== (scan.direction === 'inbound')) throw fail('PROVIDER_RESPONSE', 'Message page direction mismatch');
             if (Date.parse(row.createdAt) >= activation && Date.parse(row.createdAt) <= scan.until) rows.push({row, raw});

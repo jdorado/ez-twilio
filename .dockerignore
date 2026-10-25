@@ -1,0 +1,14 @@
+*
+!Dockerfile
+!package.json
+!ez-plugin.json
+!ez-deployment.json
+!README.md
+!SECURITY.md
+!CONTRIBUTING.md
+!CHANGELOG.md
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!bin/**
+!src/**
+!skills/**

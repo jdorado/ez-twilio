@@ -1,0 +1,22 @@
+{
+  "name": "@jc_stack/ez-twilio",
+  "version": "0.1.0-beta.1.rc.1",
+  "description": "Polling-only two-way Twilio SMS and durable receipts for Ez agents",
+  "type": "module",
+  "license": "MIT",
+  "engines": {"node": ">=22.23.4"},
+  "packageManager": "pnpm@10.30.3",
+  "bin": {"ez-twilio": "bin/ez-twilio.mjs"},
+  "files": ["bin", "src", "skills", "test", "docker", "scripts/release-check.mjs", "Dockerfile", ".dockerignore", "ez-plugin.json", "ez-deployment.json", "README.md", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "pnpm-workspace.yaml"],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "verify": "pnpm test && node --check src/cli.mjs && node --check src/service.mjs && node --check src/store.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "smoke:manager": "node docker/manager-smoke.mjs"
+  },
+  "publishConfig": {"access": "public", "tag": "latest"},
+  "repository": {"type": "git", "url": "git+https://github.com/jdorado/ez-twilio.git"},
+  "homepage": "https://github.com/jdorado/ez-twilio#readme",
+  "bugs": {"url": "https://github.com/jdorado/ez-twilio/issues"},
+  "ezRelease": {"protocol": 1, "kind": "plugin", "stateSchema": 1, "mainProtocol": 1}
+}

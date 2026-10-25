@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "twilio",
+  "version": "0.1.0-beta.1.rc.6",
+  "description": "Send and poll Twilio SMS with durable cursors and operation receipts",
+  "example": "twilio inbox --after 0 --limit 20",
+  "commands": {
+    "twilio": {
+      "executable": "bin/ez-twilio.mjs",
+      "args": [],
+      "exposure": {"receivesExternalContent": true, "sendsExternally": true, "changesRecords": true, "requiresReview": true}
+    }
+  },
+  "skills": ["skills/twilio/SKILL.md"]
+}

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.7 — unpublished candidate
+
+Standard public contribution and release instructions, PR template, pinned shared
+beta publishing caller, explicit catalog registration with release pending, and
+packed release documentation. Docker CI now runs the existing offline tests in
+the supported Node image. Provider behavior, CLI and state schema are unchanged.
+An installed live SMS/native-task exchange passed on the preceding RC; this does
+not establish core crash recovery or a published package.
+
 ## 0.1.0-beta.1.rc.6 — unpublished candidate
 
 Polling-only incoming/outgoing SMS capture, persisted pagination, local event

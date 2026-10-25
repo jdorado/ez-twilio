@@ -1,6 +1,6 @@
 {
   "name": "@jc_stack/ez-twilio",
-  "version": "0.1.0-beta.1.rc.1",
+  "version": "0.1.0-beta.1.rc.2",
   "description": "Polling-only two-way Twilio SMS and durable receipts for Ez agents",
   "type": "module",
   "license": "MIT",

@@ -1,9 +1,13 @@
 # Changelog
 
-## 0.1.0-beta.1.rc.1 — unpublished candidate
+## 0.1.0-beta.1.rc.2 — unpublished candidate
 
 Polling-only incoming/outgoing SMS capture, persisted pagination, local event
 cursors, replay protection, reserved send keys, delivery-status readback, private
 credentials, managed container, exact-contact source protocol and consistent
 backups with a restore sending barrier. Live conversation acceptance remains
 separate from synthetic tests and account readback.
+
+Review corrections: quarantined records do not starve valid capture, restores
+rotate cursor/source identity and remove old watches, and status checks rotate
+fairly even when a read fails. Nonzero inbox cursors require their store generation.

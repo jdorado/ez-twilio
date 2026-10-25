@@ -24,40 +24,48 @@ export class Transport {
       const coverage = this.store.meta('coverage');
       const full = !coverage?.fullAt || now - Date.parse(coverage.fullAt) >= DAY;
       const since = full ? activation : Math.max(activation, Date.parse(coverage.completedThrough) - 2 * DAY);
-      scan = {since, until: now, full, direction: 'inbound', path: this.provider.listPath('inbound', date(since), date(now)), pages: 0};
+      scan = {since, until: now, full, direction: 'inbound', path: this.provider.listPath('inbound', date(since), date(now)), pages: 0, gaps: 0};
     }
     let inspected = 0, captured = 0, pages = 0;
     try {
+      let gaps = scan.gaps ?? 0;
       while (scan && pages < maxPages) {
         const page = await this.provider.page(scan.path);
         const rows = [];
         for (const raw of page.messages) {
           try {
+            // Date filters are day-granular. Old/redacted records outside this
+            // installation's activation boundary are not a historical import.
+            const sourceTime = Date.parse(raw?.date_created);
+            if (Number.isFinite(sourceTime) && (sourceTime < activation || sourceTime > scan.until)) continue;
             const row = message(raw, this.connection, this.now());
             if ((row.direction === 'inbound') !== (scan.direction === 'inbound')) throw fail('PROVIDER_RESPONSE', 'Message page direction mismatch');
-            if (Date.parse(row.createdAt) >= activation && Date.parse(row.createdAt) <= scan.until) rows.push(row);
-          } catch (error) { this.store.quarantine(raw, publicError(error).code); throw error; }
+            if (Date.parse(row.createdAt) >= activation && Date.parse(row.createdAt) <= scan.until) rows.push({row, raw});
+          } catch (error) { this.store.quarantine(raw, publicError(error).code); gaps++; }
         }
         inspected += page.messages.length;
         if (page.next === scan.path) throw fail('PROVIDER_RESPONSE', 'Provider pagination did not advance');
         const next = page.next ? {...scan, path: page.next, pages: scan.pages + 1}
           : scan.direction === 'inbound' ? {...scan, direction: 'outbound', path: this.provider.listPath('outbound', date(scan.since), date(scan.until)), pages: scan.pages + 1} : null;
-        try {
-          captured += this.store.transaction(() => {
+        captured += this.store.transaction(() => {
             let count = 0;
-            for (const row of rows) count += Number(this.store.capture(row));
+            for (const {row,raw} of rows) {
+              try { count += Number(this.store.capture(row)); }
+              catch (error) {
+                if (error.code !== 'CONTENT_CONFLICT') throw error;
+                this.store.quarantine(raw,error.code); gaps++;
+              }
+            }
+            if (next) next.gaps = gaps;
             this.store.setMeta('scan', next);
             if (!next) {
               const prior = this.store.meta('coverage');
-              this.store.setMeta('coverage', {completedThrough: new Date(scan.until).toISOString(),
-                fullAt: scan.full ? new Date(scan.until).toISOString() : prior?.fullAt ?? null});
+              this.store.setMeta('coverage', {completedThrough: gaps ? prior?.completedThrough ?? this.connection.startAt : new Date(scan.until).toISOString(),
+                scannedThrough: new Date(scan.until).toISOString(), gaps,
+                fullAt: scan.full && !gaps ? new Date(scan.until).toISOString() : prior?.fullAt ?? null});
             }
             return count;
-          });
-        } catch (error) {
-          if (error.code === 'CONTENT_CONFLICT') for (const raw of page.messages) this.store.quarantine(raw, error.code);
-          throw error;
-        }
+        });
         scan = next;
         pages++;
       }
@@ -66,9 +74,12 @@ export class Transport {
       const statusErrors = [];
       for (const operation of this.store.unsettled()) {
         try { await this.refresh(operation.providerMessageId); }
-        catch (error) { statusErrors.push({key: operation.key, code: publicError(error).code}); }
+        catch (error) {
+          this.store.saveOperation({...operation,lastStatusCheckAt:new Date(this.now()).toISOString()});
+          statusErrors.push({key: operation.key, code: publicError(error).code});
+        }
       }
-      const result = {at: new Date(this.now()).toISOString(), complete: !scan, inspected, captured, pages, statusErrors};
+      const result = {at: new Date(this.now()).toISOString(), scanComplete: !scan, complete: !scan && !gaps, gaps, inspected, captured, pages, statusErrors};
       this.store.setMeta('lastPoll', {...result, error: null});
       return result;
     } catch (error) {
@@ -106,7 +117,7 @@ export class Transport {
       return operation;
     }
   }
-  accountId() { return `${this.connection.accountSid}:${this.connection.sender}`; }
+  accountId() { return `${this.connection.accountSid}:${this.connection.sender}:${this.store.meta('generation')}`; }
   checkAccount(args) {
     if (args.accountId !== this.accountId()) throw fail('ACCOUNT_MISMATCH', 'Task is bound to another account or sender', 3);
   }
@@ -130,7 +141,8 @@ export class Transport {
   }
   events(after) {
     integer(after, 0, Number.MAX_SAFE_INTEGER, 'event cursor');
-    const page = this.store.inbox(after, 100), events = [];
+    if (this.store.meta('recovery')) throw fail('RESTORE_REVIEW','Reconcile restoration and rebind source authority before consuming native events',4);
+    const page = this.store.inbox(after, 100, this.store.meta('generation')), events = [];
     let cursor = after;
     for (const event of page.events) {
       cursor = event.seq;

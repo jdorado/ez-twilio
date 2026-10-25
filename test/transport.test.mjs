@@ -80,6 +80,12 @@ test('a failed page never advances coverage; long outage starts at the unproven 
   assert.match(provider.calls.at(-2),/DateSent%3E%3D=2026-10-20/);
 });
 
+test('day-granular reads do not import or quarantine pre-activation redacted history',async t=>{
+  const {store}=await fixture(t),provider=mock([raw(1),raw(2,{body:null,date_created:'Mon, 19 Oct 2026 00:00:00 GMT'})]);
+  const result=await new Transport(store,connection,{provider,now:()=>NOW}).sync();
+  assert.equal(result.complete,true);assert.equal(store.status().messages,1);assert.equal(store.status().quarantined,0);
+});
+
 test('consumer acknowledgment is separate, monotonic and bound to the store generation',async t=>{
   const {store}=await fixture(t); await new Transport(store,connection,{provider:mock([raw(1)]),now:()=>NOW}).sync();
   const inbox=store.inbox(0,1);
@@ -125,10 +131,12 @@ test('definitive rejection is retained and delivery status is recovered by polli
   assert.equal(rejected.state,'rejected');assert.equal(rejected.error.providerCode,21610);
 });
 
-test('changed provider content is quarantined and incomplete; stale status cannot regress the receipt',async t=>{
+test('bad provider rows are quarantined without starving healthy capture; stale status cannot regress a receipt',async t=>{
   const {store}=await fixture(t),provider=mock([raw(1)]),transport=new Transport(store,connection,{provider,now:()=>NOW});
-  await transport.sync();provider.rows[0].body='Changed';
-  await assert.rejects(transport.sync(),/immutable content/);assert.equal(store.status().quarantined,1);
+  await transport.sync();provider.rows[0].body='Changed';provider.rows.push(raw(2,{body:null}),raw(3));
+  const result=await transport.sync();assert.equal(result.complete,false);assert.equal(result.scanComplete,true);
+  assert.equal(store.status().quarantined,2);assert.equal(store.getMessage(id(3)).body,'Synthetic SMS 3');
+  assert.equal(store.meta('scan'),null);assert.equal(store.meta('coverage').gaps,2);
   assert.equal(store.getMessage(id(1)).body,'Synthetic SMS 1');
   const accepted=await transport.send({to:remote,text:'Hello',key:'status:1'});
   store.transaction(()=>store.capture(message(outgoing(101,{body:'Hello',status:'delivered',date_updated:new Date(NOW+1000).toUTCString()}),connection,NOW)));
@@ -164,6 +172,34 @@ test('consistent snapshot restores with a sending barrier and preserves existing
   assert.equal((await recovered.send(payload)).providerMessageId,accepted.providerMessageId);
   await assert.rejects(recovered.send({...payload,key:'backup:2'}),/requires reconciliation/);
   assert.equal(provider.sent.length,1);
+});
+
+test('a restored snapshot invalidates old cursors and source authority even when sequence numbers are reused',async t=>{
+  const {store,directory}=await fixture(t),provider=mock([raw(1)]);
+  const original=new Transport(store,connection,{provider,now:()=>NOW});await original.sync();
+  const generation=store.meta('generation'),accountId=original.accountId();
+  original.watch({accountId,conversationId:remote,expiresAt:NOW+10000});await store.backup();
+  provider.rows.unshift(raw(2),raw(3));await original.sync();const oldCursor=store.head();
+  const restoredDirectory=join(directory,'restored');await mkdir(restoredDirectory);
+  await copyFile(join(directory,'backup.sqlite'),join(restoredDirectory,'transport.sqlite'));
+  const restored=new Store(restoredDirectory);t.after(()=>restored.close());
+  const recovered=new Transport(restored,connection,{provider,now:()=>NOW});
+  provider.rows.unshift(raw(4));await recovered.sync();
+  assert(restored.head()>oldCursor);assert.notEqual(recovered.accountId(),accountId);assert.equal(restored.watches().length,0);
+  assert.throws(()=>restored.inbox(oldCursor,100,generation),/generation/);
+  assert.throws(()=>recovered.events(0),/rebind source authority/);
+  assert(restored.inbox(0,100).events.some(event=>event.message.id===id(4)));
+});
+
+test('known-SID polling rotates beyond twenty operations including permanent read failures',async t=>{
+  const {store}=await fixture(t),provider=mock();let now=NOW;
+  const transport=new Transport(store,connection,{provider,now:()=>now});
+  for(let n=0;n<21;n++)await transport.send({to:remote,text:`Message ${n}`,key:`fair:${String(n).padStart(2,'0')}`});
+  provider.page=async()=>({messages:[],next:null});
+  const reads=[];const get=provider.get;
+  provider.get=async sid=>{reads.push(sid);if(sid===id(101))throw fail('PROVIDER_HTTP','HTTP 404',2,{httpStatus:404,definitive:true});return get(sid);};
+  now+=1000;await transport.sync();assert.equal(new Set(reads).size,20);
+  now+=1000;await transport.sync();assert.equal(new Set(reads).size,21);
 });
 
 test('HTTP provider refuses cross-account pagination and never follows redirects or leaks error content',async()=>{

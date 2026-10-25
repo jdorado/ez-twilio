@@ -48,6 +48,7 @@ export class Store {
   }
   getMessage(id) { return read(this.db.prepare('SELECT value FROM message WHERE id=?').get(id)); }
   capture(row) {
+    const observedAt = row.capturedAt;
     const immutable = hash([row.accountSid, row.id, row.from, row.to, row.direction, row.body, row.mediaCount, row.createdAt]);
     const old = this.db.prepare('SELECT * FROM message WHERE id=?').get(row.id);
     if (old && old.immutable_hash !== immutable) throw fail('CONTENT_CONFLICT', 'Known Message SID changed immutable content; capture remains incomplete', 4);
@@ -66,7 +67,7 @@ export class Store {
     // A SID is conclusive only when the operation already recorded it.
     for (const operation of this.db.prepare('SELECT value FROM operation WHERE provider_sid=?').all(row.id).map(read)) this.saveOperation({...operation,
       state: ['delivered', 'failed', 'undelivered', 'sent'].includes(row.status) ? row.status : 'accepted',
-      providerStatus: row.status, errorCode: row.errorCode, updatedAt: row.capturedAt});
+      providerStatus: row.status, errorCode: row.errorCode, updatedAt: observedAt, lastStatusCheckAt: observedAt});
     return !old;
   }
   quarantine(input, code) {
@@ -81,7 +82,8 @@ export class Store {
     });
   }
   head() { return Number(this.db.prepare('SELECT coalesce(max(seq),0) AS seq FROM event').get().seq); }
-  inbox(after = 0, limit = 20) {
+  inbox(after = 0, limit = 20, generation) {
+    if ((after > 0 || generation !== undefined) && generation !== this.meta('generation')) throw fail('CURSOR_MISMATCH', 'Supply this store generation with a nonzero cursor; replay explicitly after restoration');
     if (after > this.head()) throw fail('CURSOR_AHEAD', 'Cursor is beyond this store; reconcile restoration before consuming');
     const rows = this.db.prepare('SELECT seq,id,kind,value FROM event WHERE seq>? ORDER BY seq LIMIT ?').all(after, limit);
     return {generation: this.meta('generation'), events: rows.map(row => ({seq: Number(row.seq), id: row.id, kind: row.kind, message: JSON.parse(row.value)})),
@@ -96,7 +98,7 @@ export class Store {
   }
   operation(key) { return read(this.db.prepare('SELECT value FROM operation WHERE key=?').get(key)); }
   operations() { return this.db.prepare('SELECT value FROM operation').all().map(read); }
-  unsettled(limit = 20) { return this.db.prepare("SELECT value FROM operation WHERE provider_sid IS NOT NULL AND state NOT IN ('delivered','failed','undelivered','rejected') ORDER BY json_extract(value,'$.updatedAt') LIMIT ?").all(limit).map(read); }
+  unsettled(limit = 20) { return this.db.prepare("SELECT value FROM operation WHERE provider_sid IS NOT NULL AND state NOT IN ('delivered','failed','undelivered','rejected') ORDER BY coalesce(json_extract(value,'$.lastStatusCheckAt'),json_extract(value,'$.updatedAt')),key LIMIT ?").all(limit).map(read); }
   reserve(payload, now) {
     return this.transaction(() => {
       const old = this.db.prepare('SELECT * FROM operation WHERE key=?').get(payload.key);
@@ -137,7 +139,12 @@ export class Store {
     await backup(this.db, temporary);
     chmodSync(temporary, 0o600);
     const snapshot = new DatabaseSync(temporary);
-    try { snapshot.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('recovery', json({since, reason: 'restored_snapshot'})); }
+    try {
+      snapshot.exec('BEGIN IMMEDIATE');
+      snapshot.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('recovery', json({since, reason: 'restored_snapshot'}));
+      snapshot.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run('generation', json(randomUUID()));
+      snapshot.exec('DELETE FROM watch; DELETE FROM consumer; COMMIT');
+    }
     finally { snapshot.close(); }
     const fd = await open(temporary, 'r'); try { await fd.sync(); } finally { await fd.close(); }
     await rename(temporary, target);

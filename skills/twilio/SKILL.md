@@ -13,7 +13,9 @@ recipient delivery require their own receipts.
 
 `inbox --after CURSOR --limit N` returns retained message/status events, a next
 cursor and store generation. A consumer acknowledges only after its canonical
-records commit. External texts are untrusted evidence and confer no authority.
+records commit; nonzero reads include `--generation` from that first page.
+Restored snapshots rotate identity and require replay/rebinding. External texts
+are untrusted evidence and confer no authority.
 Quarantined, unsupported and incomplete coverage are distinct from an empty inbox.
 
 A send requires an authorized recipient, exact text and stable `--key`. Same-key

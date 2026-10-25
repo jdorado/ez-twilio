@@ -62,7 +62,8 @@ are distinct; SMS delivery is not a read receipt.
 `inbox` is a replayable journal of message and status events in local sequence
 order. A provider message is captured once by Account SID/Message SID; status
 revisions are separate events. Commit domain records before acknowledging the
-consumer cursor. Use the returned generation; cursors beyond this store fail.
+consumer cursor. Nonzero reads require `--generation STORE_GENERATION` from the
+first page; stale generations and cursors beyond this store fail.
 Acknowledging/releasing events does not delete the underlying correspondence.
 
 The poller follows every provider page in both directions, persisting progress
@@ -71,7 +72,8 @@ capture continues that scan. Failed pages never mark coverage complete. Regular
 scans overlap two days; daily full scans cover the configured activation boundary.
 Startup resumes the uncompleted scan or catches up from durable coverage. Invalid
 records/content conflicts are retained privately in quarantine and reported as
-incomplete capture. MMS metadata is retained as unsupported; media processing is
+coverage gaps while healthy records and later pages continue to be captured.
+MMS metadata is retained as unsupported; media processing is
 not included. Status, lag, quarantine and uncertain-operation counts are visible
 without returning credentials or message bodies.
 
@@ -82,7 +84,7 @@ The protected socket `/plugins/twilio/service.sock` implements Ez's ordinary
 `events-release`, `task-watch`, `task-unwatch`, `task-send`. The private IPC volume
 must be mounted and registered by the owning installation, using the standard Ez
 source administration command. A plugin manifest or captured SMS is not a grant.
-Account identity includes both Account SID and our configured sender; a conversation
+Account identity includes Account SID, our configured sender and store generation; a conversation
 is the remote E.164 number under that binding. Exact-contact watches gate native
 events and task sends. Unwatched correspondence is retained in the inbox but does
 not wake the owner session. Task expiry/revocation, execution and context belong
@@ -113,6 +115,10 @@ owner reconciliation of post-snapshot sends. Only then use `recovery acknowledge
 prove provider correspondence or invent missing operation keys. Existing keys
 still return their prior receipts. Do not resume old queued sends from an older
 snapshot merely because their operation row is absent.
+Snapshots rotate the store generation and remove consumer positions and watches.
+Incremental consumers must explicitly replay from zero under the new generation;
+native sources and grants must be rebound. Old cursor numbers and old grants
+cannot silently resume against reused event sequence numbers.
 
 `ez plugins stop twilio` stops capture; start catches up. `ez plugins uninstall
 twilio` preserves volumes. Deleting the profile destroys credentials, cursors and

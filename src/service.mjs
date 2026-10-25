@@ -39,7 +39,7 @@ export async function serve(options = {}) {
     clearTimeout(timer);
     let delay = (transport?.connection.pollSeconds ?? 60) * 1000;
     try {
-      if (transport) { const result = await transport.sync(); delay = result.complete ? delay : 1000; }
+      if (transport) { const result = await transport.sync(); delay = result.scanComplete ? delay : 1000; }
       errors = 0;
     } catch { errors++; delay = Math.min(300000, delay * 2 ** Math.min(errors, 4)); }
     if (!closed) { timer = setTimeout(() => void tick(), delay); timer.unref(); }
@@ -57,7 +57,7 @@ export async function serve(options = {}) {
       clearTimeout(timer); timer = setTimeout(() => void tick(), 0);
       return {configured: true, accountSid: connection.accountSid, sender: connection.sender, startAt: connection.startAt, pollSeconds: connection.pollSeconds};
     }
-    if (command === 'inbox') return store.inbox(integer(args.after ?? 0,0,Number.MAX_SAFE_INTEGER,'cursor'), integer(args.limit ?? 20,1,100,'limit'));
+    if (command === 'inbox') return store.inbox(integer(args.after ?? 0,0,Number.MAX_SAFE_INTEGER,'cursor'), integer(args.limit ?? 20,1,100,'limit'), args.generation);
     if (command === 'acknowledge') return store.acknowledge(key(args.consumer), integer(args.cursor,0,Number.MAX_SAFE_INTEGER,'cursor'), args.generation);
     if (command === 'operation') {
       const operation = store.operation(key(args.key));

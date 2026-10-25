@@ -17,7 +17,7 @@ async function call(args,input) {
  return new Promise((resolve,reject)=>{
   const child=spawn(process.execPath,[cli,'--home',home,...args],{stdio:['pipe','pipe','pipe']});let stdout='',stderr='';
   child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);child.on('error',reject);
-  child.on('close',code=>code===0?resolve(JSON.parse(stdout)):reject(Error(`Registered command failed (${code}): ${stderr.slice(-1000)}`)));
+  child.on('close',code=>{if(code!==0)return reject(Error(`Registered command failed (${code}): ${stderr.slice(-1000)}`));const parsed=JSON.parse(stdout);resolve(parsed.data??parsed);});
   child.stdin.end(input?JSON.stringify(input):undefined);
  });
 }
@@ -32,20 +32,20 @@ try {
  record=JSON.parse(await readFile(join(home,'registry.json'),'utf8')).plugins.twilio;
  await call(['plugins','start','twilio']);
  await call(['twilio','init'],{accountSid:`AC${'1'.repeat(32)}`,authToken:'2'.repeat(32),sender:'+15551230001',startAt:new Date(Date.now()-60000).toISOString()});
- assert.equal((await call(['twilio','doctor'])).data.sms,true);
+ assert.equal((await call(['twilio','doctor'])).sms,true);
  await call(['twilio','sync']);
- const first=(await call(['twilio','inbox','--after','0','--limit','100'])).data;
+ const first=await call(['twilio','inbox','--after','0','--limit','100']);
  assert.equal(first.events.filter(e=>e.kind==='message').length,1);
  const args=['twilio','send','--to','+15551230002','--text','Synthetic registry reply','--key','manager:1'];
- const sent=(await call(args)).data;assert.equal(sent.state,'accepted');
- assert.equal((await call(args)).data.providerMessageId,sent.providerMessageId);
+ const sent=await call(args);assert.equal(sent.state,'accepted');
+ assert.equal((await call(args)).providerMessageId,sent.providerMessageId);
  await call(['twilio','sync']);
- const exchange=(await call(['twilio','inbox','--after','0','--limit','100'])).data;
+ const exchange=await call(['twilio','inbox','--after','0','--limit','100']);
  assert.equal(exchange.events.filter(e=>e.kind==='message').length,3);
  await call(['plugins','stop','twilio']);await call(['plugins','start','twilio']);await call(['twilio','sync']);
- const after=(await call(['twilio','inbox','--after',String(exchange.nextCursor),'--limit','100'])).data;
+ const after=await call(['twilio','inbox','--after',String(exchange.nextCursor),'--generation',exchange.generation,'--limit','100']);
  assert.equal(after.events.filter(e=>e.kind==='message').length,1);
- assert.equal((await call(args)).data.providerMessageId,sent.providerMessageId);
+ assert.equal((await call(args)).providerMessageId,sent.providerMessageId);
  await call(['twilio','backup']);await call(['plugins','uninstall','twilio']);
  const volumes=(await execute('docker',['volume','ls','--filter',`label=com.docker.compose.project=${record.project}`,'--format','{{.Name}}'])).stdout.trim();assert(volumes);
  console.log('PASS: actual Ez manager install/start/registered CLI; synthetic two-way exchange; same-key send; stop/start catch-up; persistent receipts; consistent backup; data-preserving uninstall. No real provider sends.');

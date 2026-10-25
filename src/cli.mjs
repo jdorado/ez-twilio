@@ -13,7 +13,7 @@ export async function main(argv, options = {}) {
   const [command, ...rest] = args;
   if (!command || command === '--help') return {commands: [
     'init < private-connection.json', 'doctor', 'status', 'sync [--max-pages 1..200]',
-    'inbox [--after CURSOR] [--limit 1..100]', 'acknowledge --consumer NAME --cursor CURSOR --generation ID',
+    'inbox [--after CURSOR --generation STORE_GENERATION] [--limit 1..100]', 'acknowledge --consumer NAME --cursor CURSOR --generation ID',
     'message get MESSAGE_SID', 'send --to E164 --text TEXT --key KEY [--preview]', 'operation --key KEY',
     'backup', 'recovery acknowledge --reference OWNER_RECONCILIATION',
   ], configuration: {required: ['accountSid','sender'], credentials: 'apiKeySid + apiKeySecret, or authToken; stdin only', optional: ['messagingServiceSid','startAt','pollSeconds']},
@@ -31,7 +31,7 @@ export async function main(argv, options = {}) {
   if (command === 'init' && !rest.length) values.configuration = await stdinJSON(options.stdin ?? process.stdin);
   else if (['doctor','status','health','backup'].includes(command) && !rest.length) {}
   else if (command === 'message' && rest[0] === 'get' && rest.length === 2) values.id = rest[1];
-  else if (command === 'inbox') values = flags(rest, {after:'number',limit:'number'});
+  else if (command === 'inbox') values = flags(rest, {after:'number',limit:'number',generation:'string'});
   else if (command === 'sync') { const parsed = flags(rest, {'max-pages':'number'}); values = {maxPages: parsed['max-pages']}; }
   else if (command === 'send') values = flags(rest, {to:'string',text:'string',key:'string',preview:'boolean'});
   else if (command === 'operation') values = flags(rest,{key:'string'});

@@ -2,7 +2,7 @@
 
 Follow CONTRIBUTING.md in an isolated worktree and reviewed PR. Public source,
 catalog registration and a publishing workflow do not establish a release.
-`0.1.0-beta.1.rc.8` is an unpublished QA candidate. RC versions are never tagged
+`0.1.0-beta.1.rc.9` is an unpublished QA candidate. RC versions are never tagged
 or published; the first intended public version is `0.1.0-beta.1`, subject to
 fresh registry/tag readback. Never overwrite a published version.
 

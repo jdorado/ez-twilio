@@ -2,6 +2,7 @@ import {fail} from './errors.mjs';
 import {phone, sid, sender, senders} from './validation.mjs';
 
 const ORIGIN = 'https://api.twilio.com';
+const MEDIA_HOST = /\.(?:twilio|twiliocdn)\.com$/;
 export class Provider {
   constructor(connection, options = {}) {
     this.connection = connection;
@@ -9,28 +10,29 @@ export class Provider {
     this.timeout = options.timeout ?? 12000;
     this.root = `/2010-04-01/Accounts/${connection.accountSid}`;
   }
-  async request(path, form) {
+  authorization() {
+    const {apiKeySid, apiKeySecret, accountSid, authToken} = this.connection;
+    return `Basic ${Buffer.from(`${apiKeySid ?? accountSid}:${apiKeySecret ?? authToken}`).toString('base64')}`;
+  }
+  resource(path) {
     // Pagination is untrusted provider input. Credentials never follow a redirect,
-    // another origin, another account, or a non-message resource.
+    // another origin or another account.
     if (typeof path !== 'string' || !path.startsWith(`${this.root}/`)) throw fail('PROVIDER_RESPONSE', 'Invalid provider resource');
     const url = new URL(path, ORIGIN);
     if (url.origin !== ORIGIN || url.username || url.password || url.hash || !url.pathname.startsWith(`${this.root}/`)) throw fail('PROVIDER_RESPONSE', 'Invalid provider resource');
-    const {apiKeySid, apiKeySecret, accountSid, authToken} = this.connection;
+    return url;
+  }
+  async request(path, form) {
+    const url = this.resource(path);
     let response;
     try {
       response = await this.fetch(url.href, {method: form ? 'POST' : 'GET', redirect: 'error',
-        headers: {Authorization: `Basic ${Buffer.from(`${apiKeySid ?? accountSid}:${apiKeySecret ?? authToken}`).toString('base64')}`,
-          ...(form ? {'Content-Type': 'application/x-www-form-urlencoded'} : {})},
+        headers: {Authorization: this.authorization(), ...(form ? {'Content-Type': 'application/x-www-form-urlencoded'} : {})},
         ...(form ? {body: new URLSearchParams(form).toString()} : {}), signal: AbortSignal.timeout(this.timeout)});
       const raw = await boundedBody(response);
       let value;
       try { value = JSON.parse(raw); } catch { throw fail('PROVIDER_RESPONSE', 'Provider returned invalid JSON'); }
-      if (!response.ok) {
-        const definitive = response.status >= 400 && response.status < 500 && response.status !== 408;
-        throw fail(response.status === 401 || response.status === 403 ? 'PROVIDER_AUTH' : 'PROVIDER_HTTP',
-          `Twilio returned HTTP ${response.status}`, response.status === 401 || response.status === 403 ? 3 : 2,
-          {httpStatus: response.status, definitive, ...(Number.isSafeInteger(value?.code) ? {providerCode: value.code} : {})});
-      }
+      if (!response.ok) throw httpFailure(response.status, value);
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('PROVIDER_RESPONSE', 'Invalid provider response');
       return value;
     } catch (error) {
@@ -43,20 +45,51 @@ export class Provider {
       'DateSent>=': startDate, 'DateSent<=': endDate, PageSize: '100'});
     return `${this.root}/Messages.json?${query}`;
   }
-  async page(path) {
-    const url = new URL(path, ORIGIN);
-    if (url.pathname !== `${this.root}/Messages.json`) throw fail('PROVIDER_RESPONSE', 'Invalid message pagination');
+  async page(path, resource = 'Messages', field = 'messages') {
+    const pathname = `${this.root}/${resource}.json`, noun = field.slice(0, -1);
+    if (new URL(path, ORIGIN).pathname !== pathname) throw fail('PROVIDER_RESPONSE', `Invalid ${noun} pagination`);
     const value = await this.request(path);
-    if (!Array.isArray(value.messages) || value.messages.length > 1000 || !(value.next_page_uri === null || typeof value.next_page_uri === 'string')) throw fail('PROVIDER_RESPONSE', 'Invalid message page');
+    if (!Array.isArray(value[field]) || value[field].length > 1000 || !(value.next_page_uri === null || typeof value.next_page_uri === 'string')) throw fail('PROVIDER_RESPONSE', `Invalid ${noun} page`);
     if (value.next_page_uri) {
       const next = new URL(value.next_page_uri, ORIGIN);
-      if (next.origin !== ORIGIN || next.pathname !== `${this.root}/Messages.json` || !value.next_page_uri.startsWith(`${this.root}/Messages.json?`)) throw fail('PROVIDER_RESPONSE', 'Invalid message pagination');
+      if (next.origin !== ORIGIN || next.pathname !== pathname || !value.next_page_uri.startsWith(`${pathname}?`)) throw fail('PROVIDER_RESPONSE', `Invalid ${noun} pagination`);
     }
-    return {messages: value.messages, next: value.next_page_uri};
+    return {[field]: value[field], next: value.next_page_uri};
   }
   async get(messageSid) {
     if (!sid(messageSid, '(?:SM|MM)')) throw fail('INVALID_INPUT', 'Invalid Message SID');
     return this.request(`${this.root}/Messages/${messageSid}.json`);
+  }
+  callsPath(direction, startDate, endDate, number) {
+    const query = new URLSearchParams({[direction === 'inbound' ? 'To' : 'From']: sender(this.connection, number),
+      'StartTime>=': startDate, 'StartTime<=': endDate, PageSize: '100'});
+    return `${this.root}/Calls.json?${query}`;
+  }
+  async media(path, limit) {
+    // Twilio may redirect recording media to a signed Twilio CDN URL. Allow one hop,
+    // only to https on a Twilio host, and send no credentials to it.
+    let url = this.resource(path), redirected = false;
+    try {
+      for (;;) {
+        const response = await this.fetch(url.href, {method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(this.timeout),
+          headers: redirected ? {} : {Authorization: this.authorization()}});
+        if (response.status >= 300 && response.status < 400) {
+          await response.body?.cancel();
+          const location = response.headers.get('location');
+          const next = location && !redirected && URL.canParse(location, url) ? new URL(location, url) : null;
+          if (!next || next.protocol !== 'https:' || next.username || next.password || next.port || !MEDIA_HOST.test(next.hostname)) throw fail('PROVIDER_RESPONSE', 'Unsupported media redirect');
+          url = next; redirected = true;
+          continue;
+        }
+        if (!response.ok) { await response.body?.cancel(); throw httpFailure(response.status); }
+        const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+        if (!/^audio\/[a-z0-9.+-]{1,64}$/.test(contentType)) { await response.body?.cancel(); throw fail('PROVIDER_RESPONSE', 'Provider returned non-audio media'); }
+        return {contentType, bytes: await boundedBytes(response, limit, () => fail('RECORDING_TOO_LARGE', `Recording exceeds the ${limit} byte limit`, 4, {limit}))};
+      }
+    } catch (error) {
+      if (error?.exitCode) throw error;
+      throw fail('PROVIDER_UNAVAILABLE', 'Twilio request interrupted', 5);
+    }
   }
   async create(payload) {
     return this.request(`${this.root}/Messages.json`, {From: payload.from, To: payload.to, Body: payload.text,
@@ -74,21 +107,27 @@ export class Provider {
   }
 }
 
-async function boundedBody(response) {
-  let bytes = 0, result = '';
-  const reader = response.body?.getReader();
+const boundedBody = async response => new TextDecoder().decode(await boundedBytes(response, 2 * 1024 * 1024, () => fail('PROVIDER_RESPONSE', 'Provider response exceeds size limit')));
+async function boundedBytes(response, limit, overflow) {
+  let bytes = 0;
+  const chunks = [], reader = response.body?.getReader();
   if (!reader) throw fail('PROVIDER_RESPONSE', 'Provider response body missing');
-  const decoder = new TextDecoder();
   try {
     for (;;) {
       const {done, value} = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > 2 * 1024 * 1024) { await reader.cancel(); throw fail('PROVIDER_RESPONSE', 'Provider response exceeds size limit'); }
-      result += decoder.decode(value, {stream: true});
+      if (bytes > limit) { await reader.cancel(); throw overflow(); }
+      chunks.push(value);
     }
-    return result + decoder.decode();
+    return Buffer.concat(chunks);
   } finally { reader.releaseLock(); }
+}
+
+function httpFailure(status, value) {
+  const auth = status === 401 || status === 403;
+  return fail(auth ? 'PROVIDER_AUTH' : 'PROVIDER_HTTP', `Twilio returned HTTP ${status}`, auth ? 3 : 2,
+    {httpStatus: status, definitive: status >= 400 && status < 500 && status !== 408, ...(Number.isSafeInteger(value?.code) ? {providerCode: value.code} : {})});
 }
 
 export function message(raw, connection, now = Date.now()) {

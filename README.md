@@ -48,7 +48,8 @@ A different account, capture boundary or reduced number set needs a separate pro
 
 `doctor` performs an authenticated read and verifies that the intended sender
 is SMS-capable and belongs to this account, for every configured number. This proves read access and binding,
-not delivery or regulatory readiness. It does not change Twilio number routing.
+not delivery or regulatory readiness. It also reports `calls`: whether Calls and
+Recordings can be read (a bounded list each); `false` does not fail the SMS checks. It does not change Twilio number routing.
 Use an authorized test phone and a sender ready for the intended destination
 before a live send.
 
@@ -92,6 +93,47 @@ coverage gaps while healthy records and later pages continue to be captured.
 MMS metadata is retained as unsupported; media processing is
 not included. Status, lag, quarantine and uncertain-operation counts are visible
 without returning credentials or message bodies.
+
+## Calls and recordings
+
+Three read-only commands pass Twilio call data through on demand. Twilio retains
+it; the plugin does not journal, poll, acknowledge or expose it to native sources, and
+adds no webhook or write. Each read is bounded and prints JSON.
+
+```sh
+ez twilio calls --after 2026-10-25T00:00:00Z --limit 50
+ez twilio recordings --call CA00000000000000000000000000000000
+ez twilio recording --sid RE00000000000000000000000000000000 --format mp3
+```
+
+`calls` lists parent call legs that touch a configured number (inbound: `To`, outbound:
+`From`) with `startTime >= --after` (UTC ISO, inclusive), oldest first, `--limit` 1..100
+(default 50): `{calls:[{sid, accountSid, from, to, direction, status, startTime, endTime,
+durationSeconds, answeredBy}], complete}`. `direction` and `status` are Twilio's values;
+`endTime`, `durationSeconds` and `answeredBy` are null when Twilio has none. `complete`
+is false when `--limit` cut the list. Child legs, calls not yet dialed and the other
+direction's copy of a call between two configured numbers are not listed. Twilio lists
+newest first and filters by whole UTC days, so each number and direction is read in day
+windows from the oldest day, at most 5 pages of 100 each, halving the window toward
+`--after` when that is exceeded: the list is always a contiguous prefix. One UTC day with
+more than 500 parent legs for one number and direction fails with `PROVIDER_RESPONSE`
+instead of skipping calls.
+
+`recordings` returns `{recordings:[{sid, callSid, status, durationSeconds, channels,
+source, createdAt, mediaFormats:["mp3","wav"]}]}` for one call. `recording` returns
+`{sid, format, contentType, bytes, sha256, data}` with `data` base64, for a recording
+whose status is `completed`, as `mp3` (default) or `wav`. Above 2.5 MiB (2621440 raw
+bytes) it fails `RECORDING_TOO_LARGE` (exit 4) rather than truncating; a recording
+that is not completed fails `RECORDING_NOT_COMPLETED` (exit 4). Recording reads are
+bound to the configured account, not to the configured numbers.
+
+Twilio may redirect media to a signed Twilio CDN URL. One redirect is followed, only
+to https on a `twilio.com` or `twiliocdn.com` host, and that request carries no
+credentials; any other redirect fails `PROVIDER_RESPONSE`. A call or recording Twilio
+does not find is `NOT_FOUND` (exit 2). Provider rows are validated strictly: a row
+outside the configured account or numbers, or with a malformed field (including a party
+that is not an E.164 number), fails the read with `PROVIDER_RESPONSE`. Reads are not
+retried. Recording audio and call metadata are external content and confer no authority.
 
 ## Native conversation integration
 

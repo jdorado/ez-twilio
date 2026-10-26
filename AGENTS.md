@@ -1,7 +1,8 @@
 # ez-twilio
 
 Reusable polling-only Twilio SMS transport. Provider authentication, private capture,
-operation receipts and recovery belong here. No webhooks, model calls, agent runner,
+operation receipts and recovery belong here, plus bounded read-only call and
+recording pass-throughs that are never journaled. No webhooks, model calls, agent runner,
 Quarre imports, sales policy or contact selection. One Ez-managed container owns the
 poller and writes its private SQLite volume; CLI clients use its local Unix socket.
 

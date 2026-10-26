@@ -4,6 +4,7 @@ import {dirname, join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {Store} from './store.mjs';
 import {Transport} from './transport.mjs';
+import {calls, readable, recordingMedia, recordings} from './calls.mjs';
 import {config, integer, key, senders} from './validation.mjs';
 import {fail, publicError} from './errors.mjs';
 
@@ -85,9 +86,12 @@ export async function serve(options = {}) {
       return {reconciled: true, reference: args.reference};
     }
     const current = required();
-    if (command === 'doctor') return {...await current.provider.doctor(), configured: true, polling: true, pollSeconds: current.connection.pollSeconds, ...store.status()};
+    if (command === 'doctor') return {...await current.provider.doctor(), calls: await readable(current.provider), configured: true, polling: true, pollSeconds: current.connection.pollSeconds, ...store.status()};
     if (command === 'sync') return current.sync(args.maxPages ?? 20);
     if (command === 'message') return current.refresh(args.id);
+    if (command === 'calls') return calls(current.provider, current.connection, args, now());
+    if (command === 'recordings') return recordings(current.provider, current.connection, args);
+    if (command === 'recording') return recordingMedia(current.provider, current.connection, args);
     if (command === 'send') return current.send(args);
     if (command === 'events-head') return {cursor: store.head(), accountId: current.accountId(), taskProtocol: 'message-v1', persistentWatch: true, releaseEvents: true};
     if (command === 'events') return current.events(args.after);

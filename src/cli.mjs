@@ -14,9 +14,13 @@ export async function main(argv, options = {}) {
   if (!command || command === '--help') return {commands: [
     'init < private-connection.json', 'doctor', 'status', 'sync [--max-pages 1..200]',
     'inbox [--after CURSOR --generation STORE_GENERATION] [--limit 1..100]', 'acknowledge --consumer NAME --cursor CURSOR --generation ID',
-    'message get MESSAGE_SID', 'send [--from OUR_E164] --to E164 --text TEXT --key KEY [--preview]', 'operation --key KEY',
+    'message get MESSAGE_SID', 'calls --after ISO_TIMESTAMP [--limit 1..100]', 'recordings --call CALL_SID', 'recording --sid RECORDING_SID [--format mp3|wav]', 'send [--from OUR_E164] --to E164 --text TEXT --key KEY [--preview]', 'operation --key KEY',
     'backup', 'recovery acknowledge --reference OWNER_RECONCILIATION',
   ], configuration: {required: ['accountSid','sender or senders[]'], credentials: 'apiKeySid + apiKeySecret, or authToken; stdin only', optional: ['messagingServiceSid','startAt','pollSeconds'], senders: 'Multiple configured numbers share one poller. Select --from when more than one is configured; selection policy belongs to the caller.'},
+    reads: {calls: 'Parent call legs on configured numbers with startTime >= --after (UTC ISO; inclusive), oldest first, --limit default 50: {calls:[{sid,accountSid,from,to,direction,status,startTime,endTime,durationSeconds,answeredBy}],complete}. complete is false when --limit cut the list.',
+      recordings: 'Recordings of one call: {recordings:[{sid,callSid,status,durationSeconds,channels,source,createdAt,mediaFormats}]}.',
+      recording: 'Media of a completed recording: {sid,format,contentType,bytes,sha256,data}; data is base64. Above 2621440 bytes (2.5 MiB) it fails RECORDING_TOO_LARGE; a recording that is not completed fails RECORDING_NOT_COMPLETED.',
+      scope: 'Bounded, read-only pass-through of Twilio-retained data: not journaled, no webhooks, no writes. A call or recording Twilio does not find is NOT_FOUND.'},
     transport: 'One managed Docker service polls independently. No webhooks. Keep the operation key after uncertainty; never retry with a new key.',
     exitCodes: {0:'ok',1:'internal',2:'invalid input or provider error',3:'auth/account',4:'refused',5:'uncertain send/service response'}};
   if (command === '--version' && !rest.length) return {version: pkg.version};
@@ -34,6 +38,9 @@ export async function main(argv, options = {}) {
   else if (command === 'inbox') values = flags(rest, {after:'number',limit:'number',generation:'string'});
   else if (command === 'sync') { const parsed = flags(rest, {'max-pages':'number'}); values = {maxPages: parsed['max-pages']}; }
   else if (command === 'send') values = flags(rest, {from:'string',to:'string',text:'string',key:'string',preview:'boolean'});
+  else if (command === 'calls') values = flags(rest,{after:'string',limit:'number'});
+  else if (command === 'recordings') values = flags(rest,{call:'string'});
+  else if (command === 'recording') values = flags(rest,{sid:'string',format:'string'});
   else if (command === 'operation') values = flags(rest,{key:'string'});
   else if (command === 'acknowledge') values = flags(rest,{consumer:'string',cursor:'number',generation:'string'});
   else if (command === 'recovery' && rest[0] === 'acknowledge') { name = 'recovery-acknowledge'; values = flags(rest.slice(1),{reference:'string'}); }

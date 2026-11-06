@@ -146,6 +146,17 @@ test('definitive rejection is retained and delivery status is recovered by polli
   assert.equal(rejected.state,'rejected');assert.equal(rejected.error.providerCode,21610);
 });
 
+test('a short-code or alphanumeric sender is captured, so coverage still advances',async t=>{
+  const {store}=await fixture(t),provider=mock([raw(1,{from:'32665'}),raw(2,{from:'Carrier'}),raw(3)]),
+    transport=new Transport(store,connection,{provider,now:()=>NOW});
+  const result=await transport.sync();assert.equal(result.complete,true);
+  assert.equal(store.status().messages,3);assert.equal(store.status().quarantined,0);
+  assert.equal(store.getMessage(id(1)).from,'32665');assert.equal(store.getMessage(id(2)).from,'Carrier');
+  assert.equal(store.meta('coverage').gaps,0);
+  assert.throws(()=>message(raw(4,{from:'12'}),connection,NOW),{code:'INVALID_INPUT'});
+  assert.throws(()=>message(raw(5,{to:'32665'}),connection,NOW),{code:'INVALID_INPUT'});
+});
+
 test('bad provider rows are quarantined without starving healthy capture; stale status cannot regress a receipt',async t=>{
   const {store}=await fixture(t),provider=mock([raw(1)]),transport=new Transport(store,connection,{provider,now:()=>NOW});
   await transport.sync();provider.rows[0].body='Changed';provider.rows.push(raw(2,{body:null}),raw(3));

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.10 — unpublished candidate
+
+A text from a short code or an alphanumeric sender is captured instead of quarantined. It
+was rejected as "not E.164", and because a quarantined record keeps a scan from completing,
+polling coverage stopped advancing on the first such text and never recovered on its own.
+Our own number stays strictly E.164; only the other party may be a short code (3 to 8
+digits) or an alphanumeric sender (up to 11 characters). Replying to one is still refused.
+Nothing else changes: the journal, the native source protocol and state schema 1.
+
 ## 0.1.0-beta.1.rc.9 — unpublished candidate
 
 Read-only `calls`, `recordings` and `recording` commands: bounded Twilio pass-through

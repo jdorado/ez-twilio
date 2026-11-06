@@ -130,11 +130,15 @@ function httpFailure(status, value) {
     {httpStatus: status, definitive: status >= 400 && status < 500 && status !== 408, ...(Number.isSafeInteger(value?.code) ? {providerCode: value.code} : {})});
 }
 
+// Our own number is always E.164. The other party may be a short code or an alphanumeric
+// sender: real captured traffic, not an invalid record that would freeze coverage.
+const party = value => typeof value === 'string' && /^(?:\d{3,8}|[A-Za-z][A-Za-z0-9 ._-]{0,10})$/.test(value) ? value : phone(value);
+
 export function message(raw, connection, now = Date.now()) {
   if (!raw || !sid(raw.sid, '(?:SM|MM)') || raw.account_sid !== connection.accountSid ||
       !['inbound', 'outbound-api', 'outbound-call', 'outbound-reply'].includes(raw.direction)) throw fail('PROVIDER_RESPONSE', 'Invalid message identity');
-  const from = phone(raw.from), to = phone(raw.to);
   const inbound = raw.direction === 'inbound';
+  const from = inbound ? party(raw.from) : phone(raw.from), to = inbound ? phone(raw.to) : party(raw.to);
   if (!senders(connection).includes(inbound ? to : from)) throw fail('PROVIDER_RESPONSE', 'Message is outside the configured senders');
   if (typeof raw.body !== 'string' || raw.body.length > 32000 || !Number.isFinite(Date.parse(raw.date_created)) ||
       !/^[a-z_]{1,32}$/.test(raw.status) || !/^\d{1,3}$/.test(String(raw.num_media ?? 0))) throw fail('PROVIDER_RESPONSE', 'Invalid message fields');

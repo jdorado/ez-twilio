@@ -137,6 +137,33 @@ outside the configured account or numbers, or with a malformed field (including 
 that is not an E.164 number), fails the read with `PROVIDER_RESPONSE`. Reads are not
 retried. Recording audio and call metadata are external content and confer no authority.
 
+## Missed call (ring)
+
+```sh
+ez twilio ring --from +15551230001 --to +15551234567 --key test:ring:1 --seconds 10 --preview
+ez twilio ring --from +15551230001 --to +15551234567 --key test:ring:1 --seconds 10
+ez twilio operation --key test:ring:1
+```
+
+A ring is one call that nobody is meant to answer: a Twilio call from the selected number with a ring
+timeout (`--seconds`, 5 to 60, default 10) and inline `<Hangup/>` TwiML. Twilio stops ringing by
+itself (status `no-answer`), so there is no second request to cancel it and no race with a pickup;
+a person who answers is hung up on at once. The call has no audio, no recording, no webhook and no
+machine detection. Twilio adds a buffer of a few seconds for some call flows, so the ring can last
+longer than `--seconds`; the handset's missed call and the call record (`startTime`, `endTime`) show
+how long. Keep it under the carrier's mailbox delay (about 20 seconds) or the call reaches voicemail.
+
+It has the send contract. The operation under `--key` is reserved durably before the single create
+request; the same key and payload return the kept operation (`accepted`, with `providerCallId`),
+changed content under that key is `KEY_CONFLICT`, a lost response is `uncertain` (exit 5, never
+resubmitted) and a definitive refusal is `rejected` (exit 4, for example a number Twilio cannot
+call). A key names either a text or a ring, never both. Polling reads an unfinished ring back by its
+SID: when Twilio reports it finished the operation becomes `settled` with `providerStatus`
+(`no-answer`, `completed`, `busy`, `failed`, `canceled`) and `durationSeconds`. The `calls` read lists
+a placed ring with its operation key in `operation` (null for other calls), and `doctor` reports
+`voice`, whether every configured number can place one. The plugin never decides whether a person
+should be called; the caller owns that, and any call may be subject to law and carrier rules.
+
 ## Native conversation integration
 
 The protected socket `/plugins/twilio/service.sock` implements Ez's ordinary

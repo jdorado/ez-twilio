@@ -114,7 +114,8 @@ export class Store {
   }
   operation(key) { return read(this.db.prepare('SELECT value FROM operation WHERE key=?').get(key)); }
   operations() { return this.db.prepare('SELECT value FROM operation').all().map(read); }
-  unsettled(limit = 20) { return this.db.prepare("SELECT value FROM operation WHERE provider_sid IS NOT NULL AND state NOT IN ('delivered','failed','undelivered','rejected') ORDER BY coalesce(json_extract(value,'$.lastStatusCheckAt'),json_extract(value,'$.updatedAt')),key LIMIT ?").all(limit).map(read); }
+  operationKey(sid) { return this.db.prepare('SELECT key FROM operation WHERE provider_sid=?').get(sid)?.key ?? null; }
+  unsettled(limit = 20) { return this.db.prepare("SELECT value FROM operation WHERE provider_sid IS NOT NULL AND state NOT IN ('delivered','failed','undelivered','rejected','settled') ORDER BY coalesce(json_extract(value,'$.lastStatusCheckAt'),json_extract(value,'$.updatedAt')),key LIMIT ?").all(limit).map(read); }
   reserve(payload, now) {
     return this.transaction(() => {
       const old = this.db.prepare('SELECT * FROM operation WHERE key=?').get(payload.key);
@@ -124,12 +125,12 @@ export class Store {
         return {existing: true, operation: JSON.parse(old.value)};
       }
       if (this.meta('recovery')) throw fail('RESTORE_REVIEW', 'Restored transport state requires reconciliation before sending', 4);
-      const operation = {...payload, state: 'uncertain', providerMessageId: null, createdAt: now, updatedAt: now};
+      const operation = {...payload, state: 'uncertain', providerMessageId: null, ...(payload.kind === 'ring' ? {providerCallId: null} : {}), createdAt: now, updatedAt: now};
       this.db.prepare('INSERT INTO operation VALUES (?,?,?,?,?)').run(payload.key, json(operation), digest, null, operation.state);
       return {existing: false, operation};
     });
   }
-  saveOperation(operation) { this.db.prepare('UPDATE operation SET value=?,provider_sid=?,state=? WHERE key=?').run(json(operation), operation.providerMessageId, operation.state, operation.key); }
+  saveOperation(operation) { this.db.prepare('UPDATE operation SET value=?,provider_sid=?,state=? WHERE key=?').run(json(operation), operation.providerMessageId ?? operation.providerCallId ?? null, operation.state, operation.key); }
   watches() { return this.db.prepare('SELECT conversation,value FROM watch').all().map(row => ({conversation: row.conversation, ...JSON.parse(row.value)})); }
   watch(conversation, expiresAt, now) {
     const old = read(this.db.prepare('SELECT value FROM watch WHERE conversation=?').get(conversation));

@@ -2,6 +2,7 @@ import {fail} from './errors.mjs';
 import {phone, sid, sender, senders} from './validation.mjs';
 
 const ORIGIN = 'https://api.twilio.com';
+const HANGUP = '<Response><Hangup/></Response>';
 const MEDIA_HOST = /\.(?:twilio|twiliocdn)\.com$/;
 export class Provider {
   constructor(connection, options = {}) {
@@ -95,15 +96,28 @@ export class Provider {
     return this.request(`${this.root}/Messages.json`, {From: payload.from, To: payload.to, Body: payload.text,
       ...(payload.messagingServiceSid ? {MessagingServiceSid: payload.messagingServiceSid} : {})});
   }
+  // One Calls create request with inline TwiML: no webhook and no media. Twilio stops ringing after
+  // `Timeout` seconds (status no-answer); a pickup runs <Hangup/>. It adds a buffer of a few seconds
+  // for some flows, so the observed ring can be longer than `seconds`.
+  async createCall(payload) {
+    return this.request(`${this.root}/Calls.json`, {From: payload.from, To: payload.to, Timeout: String(payload.seconds), Twiml: HANGUP});
+  }
+  async getCall(callSid) {
+    if (!sid(callSid, 'CA')) throw fail('INVALID_INPUT', 'Invalid Call SID');
+    return this.request(`${this.root}/Calls/${callSid}.json`);
+  }
   async doctor() {
     const numbers = senders(this.connection);
+    let voice = true;
     for (const from of numbers) {
       const value = await this.request(`${this.root}/IncomingPhoneNumbers.json?${new URLSearchParams({PhoneNumber: from, PageSize: '20'})}`);
       if (!Array.isArray(value.incoming_phone_numbers)) throw fail('PROVIDER_RESPONSE', 'Invalid sender readback');
       const number = value.incoming_phone_numbers.find(row => row.phone_number === from && row.account_sid === this.connection.accountSid);
       if (!number || number.capabilities?.sms !== true) throw fail('SENDER_UNAVAILABLE', 'Configured sender is not an SMS-capable number in this account', 4);
+      voice &&= number.capabilities?.voice === true;
     }
-    return {accountSid: this.connection.accountSid, senders: numbers, ...(numbers.length === 1 ? {sender: numbers[0]} : {}), sms: true};
+    // `voice`: every configured number can place a ring. False does not fail the SMS checks.
+    return {accountSid: this.connection.accountSid, senders: numbers, ...(numbers.length === 1 ? {sender: numbers[0]} : {}), sms: true, voice};
   }
 }
 

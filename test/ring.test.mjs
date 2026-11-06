@@ -9,7 +9,7 @@ import {Transport} from '../src/transport.mjs';
 import {Provider} from '../src/provider.mjs';
 import {serve} from '../src/service.mjs';
 import {main} from '../src/cli.mjs';
-import {fail} from '../src/errors.mjs';
+import {fail, publicError} from '../src/errors.mjs';
 import {config, ringInput} from '../src/validation.mjs';
 
 const NOW = Date.parse('2026-11-06T12:00:00.000Z');
@@ -170,9 +170,9 @@ test('the service places a ring over its socket, names it in the calls read and 
   assert.deepEqual(byId, {[callSid(1)]: 'svc:ring', [callSid(9)]: null});
   assert.equal((await cli(['operation', '--key', 'svc:ring'])).providerCallId, callSid(1));
   provider.createCall = async () => { throw fail('PROVIDER_UNAVAILABLE', 'lost', 5); };
-  await assert.rejects(cli(['ring', '--to', remote, '--key', 'svc:lost']), error => error.code === 'UNCERTAIN_RING' && error.exitCode === 5);
+  await assert.rejects(cli(['ring', '--to', remote, '--key', 'svc:lost']), error => { const shown = publicError(error); return shown.code === 'UNCERTAIN_RING' && shown.exitCode === 5 && shown.key === 'svc:lost'; });
   provider.createCall = async () => { throw fail('PROVIDER_HTTP', 'bad', 2, {httpStatus: 400, definitive: true}); };
-  await assert.rejects(cli(['ring', '--to', remote, '--key', 'svc:bad']), error => error.code === 'RING_REJECTED' && error.exitCode === 4);
+  await assert.rejects(cli(['ring', '--to', remote, '--key', 'svc:bad']), error => { const shown = publicError(error); return shown.code === 'RING_REJECTED' && shown.exitCode === 4 && shown.httpStatus === 400 && shown.reason === 'PROVIDER_HTTP'; });
   const help = await main(['--help'], {socketPath});
   assert.ok(help.commands.some(line => line.startsWith('ring ')));
 });

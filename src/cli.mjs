@@ -18,7 +18,7 @@ export async function main(argv, options = {}) {
     'backup', 'recovery acknowledge --reference OWNER_RECONCILIATION',
   ], configuration: {required: ['accountSid','sender or senders[]'], credentials: 'apiKeySid + apiKeySecret, or authToken; stdin only', optional: ['messagingServiceSid','startAt','pollSeconds'], senders: 'Multiple configured numbers share one poller. Select --from when more than one is configured; selection policy belongs to the caller.'},
     ring: 'A missed call: one call from our number that Twilio itself ends after --seconds (default 10) of ringing, or at once if answered; no audio, no webhook. Returns the operation {key,state,providerCallId,providerStatus}. Same key, same call: a repeat reads the kept operation. The call reaches the mailbox only if the carrier answers before --seconds; keep it well under the carrier mailbox delay (about 20 seconds).',
-    reads: {calls: 'Parent call legs on configured numbers with startTime >= --after (UTC ISO; inclusive), oldest first, --limit default 50: {calls:[{sid,accountSid,from,to,direction,status,startTime,endTime,durationSeconds,answeredBy}],complete}. complete is false when --limit cut the list.',
+    reads: {calls: 'Parent call legs on configured numbers with startTime >= --after (UTC ISO; inclusive), oldest first, --limit default 50: {calls:[{sid,accountSid,from,to,direction,status,startTime,endTime,durationSeconds,answeredBy,operation}],complete}; operation is the key of the ring this plugin placed as that call, else null. complete is false when --limit cut the list.',
       recordings: 'Recordings of one call: {recordings:[{sid,callSid,status,durationSeconds,channels,source,createdAt,mediaFormats}]}.',
       recording: 'Media of a completed recording: {sid,format,contentType,bytes,sha256,data}; data is base64. Above 2621440 bytes (2.5 MiB) it fails RECORDING_TOO_LARGE; a recording that is not completed fails RECORDING_NOT_COMPLETED.',
       scope: 'Bounded, read-only pass-through of Twilio-retained data: not journaled, no webhooks, no writes. A call or recording Twilio does not find is NOT_FOUND.'},
@@ -49,7 +49,7 @@ export async function main(argv, options = {}) {
   else throw fail('INVALID_INPUT','Invalid command; read --help');
   const result = await client(socketPath,name,values);
   if (command === 'ring' && result.state === 'uncertain') throw fail('UNCERTAIN_RING','Ring outcome is uncertain; inspect operation with the same key',5,{key:result.key,providerCallId:result.providerCallId});
-  if (command === 'ring' && result.state === 'rejected') throw fail('RING_REJECTED','Provider rejected this operation; inspect its receipt',4,{key:result.key,...result.error});
+  if (command === 'ring' && result.state === 'rejected') throw fail('RING_REJECTED','Provider rejected this operation; inspect its receipt',4,{key:result.key,reason:result.error?.code,...(result.error?.httpStatus ? {httpStatus:result.error.httpStatus} : {}),...(result.error?.providerCode ? {providerCode:result.error.providerCode} : {})});
   if (command === 'send' && result.state === 'uncertain') throw fail('UNCERTAIN_SEND','Send outcome is uncertain; inspect operation with the same key',5,{key:result.key,providerMessageId:result.providerMessageId});
   if (command === 'send' && result.state === 'rejected') throw fail('SEND_REJECTED','Provider rejected this operation; inspect its receipt',4,{key:result.key,...result.error});
   return result;

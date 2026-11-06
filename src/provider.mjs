@@ -38,7 +38,7 @@ export class Provider {
       return value;
     } catch (error) {
       if (error?.exitCode) throw error;
-      throw fail('PROVIDER_UNAVAILABLE', 'Twilio request interrupted; read back the existing operation before retrying a send', 5);
+      throw fail('PROVIDER_UNAVAILABLE', 'Twilio request interrupted; read back the existing operation before retrying', 5);
     }
   }
   listPath(direction, startDate, endDate, from) {

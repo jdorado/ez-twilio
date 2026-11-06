@@ -160,6 +160,15 @@ test('a short-code or alphanumeric sender is captured, so coverage still advance
   assert.throws(()=>message(raw(7,{from:'123456789'}),connection,NOW),{code:'INVALID_INPUT'});
 });
 
+test('a content conflict stays in quarantine after a later clean read of the original',async t=>{
+  const {store}=await fixture(t),original=raw(8),changed=raw(8,{body:'Changed'});
+  store.transaction(()=>store.capture(message(original,connection,NOW)));
+  assert.throws(()=>store.capture(message(changed,connection,NOW)),{code:'CONTENT_CONFLICT'});
+  store.quarantine(changed,'CONTENT_CONFLICT');assert.equal(store.status().quarantined,1);
+  store.transaction(()=>store.capture(message(original,connection,NOW)));
+  assert.equal(store.status().quarantined,1);
+});
+
 test('bad provider rows are quarantined without starving healthy capture; stale status cannot regress a receipt',async t=>{
   const {store}=await fixture(t),provider=mock([raw(1)]),transport=new Transport(store,connection,{provider,now:()=>NOW});
   await transport.sync();provider.rows[0].body='Changed';provider.rows.push(raw(2,{body:null}),raw(3));

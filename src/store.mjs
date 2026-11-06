@@ -81,7 +81,9 @@ export class Store {
       state: ['delivered', 'failed', 'undelivered', 'sent'].includes(row.status) ? row.status : 'accepted',
       providerStatus: row.status, errorCode: row.errorCode, updatedAt: observedAt, lastStatusCheckAt: observedAt});
     // A record that was quarantined and now captures is resolved: the message is kept, so its entry goes.
-    this.db.prepare("DELETE FROM quarantine WHERE json_extract(value, '$.raw.sid') = ?").run(row.id);
+    // A content conflict is not: the provider returned two versions of one SID, and a later clean read
+    // of the original does not reconcile that, so its evidence stays.
+    this.db.prepare("DELETE FROM quarantine WHERE json_extract(value, '$.raw.sid') = ? AND json_extract(value, '$.code') IS NOT 'CONTENT_CONFLICT'").run(row.id);
     return !old;
   }
   quarantine(input, code) {

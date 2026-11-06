@@ -9,7 +9,9 @@ Our own number stays strictly E.164; only the other party may be a short code (3
 digits) or an alphanumeric sender (up to 11 characters with at least one letter, so
 `1Password` counts). Replying to one is still refused. A quarantined record that later
 captures is removed from quarantine, so the count falls and the next scan completes
-(an already-quarantined short-code text clears itself on the first scan after the upgrade).
+(an already-quarantined short-code text clears the next time a scan reads that message,
+normally the first scan after the upgrade). A content conflict is never cleared this way:
+its evidence stays until it is reconciled.
 Nothing else changes: the journal, the native source protocol and state schema 1.
 
 ## 0.1.0-beta.1.rc.9 — unpublished candidate

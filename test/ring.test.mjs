@@ -176,3 +176,36 @@ test('the service places a ring over its socket, names it in the calls read and 
   const help = await main(['--help'], {socketPath});
   assert.ok(help.commands.some(line => line.startsWith('ring ')));
 });
+
+test('a ring that never rang is failed and one that rang is settled, whatever its provider status', async t => {
+  const outcomes = {'no-answer': 'settled', busy: 'settled', completed: 'settled', failed: 'failed', canceled: 'failed'};
+  for (const [status, state] of Object.entries(outcomes)) {
+    const {store} = await fixture(t), provider = mock();
+    const transport = new Transport(store, connection, {provider, now: () => NOW});
+    await transport.ring({to: remote, key: `map:${status}`});
+    provider.status = status; provider.duration = '0';
+    await transport.sync();
+    const operation = store.operation(`map:${status}`);
+    assert.equal(operation.state, state, status); assert.equal(operation.providerStatus, status);
+    const reads = provider.reads.length; await transport.sync();
+    assert.equal(provider.reads.length, reads, `${status} is read back once it ended`);
+  }
+});
+
+test('a malformed bound never becomes the default: no number, no null, no call', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'ez-twilio-ring-bound-'));
+  t.after(() => rm(directory, {recursive: true, force: true}));
+  const socketPath = join(directory, 'service.sock'), provider = mock();
+  const running = await serve({directory, socketPath, provider: () => provider, now: () => NOW}); t.after(() => running.close());
+  const cli = (args, stdin) => main(args, {socketPath, stdin: Readable.from([JSON.stringify(stdin ?? {})])});
+  await cli(['init'], {accountSid, authToken: '2'.repeat(32), sender, startAt});
+  for (const bad of ['abc', 'NaN', 'Infinity', '-Infinity', '', ' ', '4', '61', '9.5', '0x10', '1e1', '-5', '+7']) {
+    await assert.rejects(cli(['ring', '--to', remote, '--key', `bound:${bad}`, '--seconds', bad]), error => publicError(error).code === 'INVALID_INPUT', `seconds ${JSON.stringify(bad)}`);
+  }
+  assert.equal(provider.created.length, 0);
+  await assert.rejects(cli(['inbox', '--after', 'abc']), error => publicError(error).code === 'INVALID_INPUT');
+  assert.throws(() => ringInput({to: remote, key: 'bound:null', seconds: null}, connection), /ring seconds/);
+  assert.equal((await cli(['ring', '--to', remote, '--key', 'bound:default'])).seconds, 10);
+  assert.equal((await cli(['ring', '--to', remote, '--key', 'bound:set', '--seconds', '7'])).seconds, 7);
+  assert.deepEqual(provider.created.map(call => call.seconds), [10, 7]);
+});

@@ -33,8 +33,8 @@ selected number that Twilio ends itself after `--seconds` of ringing (default 10
 someone answers. It has the send contract: stable `--key`, `--preview`, exit 5 uncertain (inspect
 `operation --key KEY`, never a new key), exit 4 refused. Keep `--seconds` well under the carrier's
 mailbox delay (about 20 seconds) or the call reaches voicemail. The operation shows `providerCallId`
-and, once polling sees the call finish, `state: settled` with `providerStatus`
-(`no-answer`, `completed`, `busy`, `failed`, `canceled`) and `durationSeconds`.
+and, once polling sees the call finish, `state: settled` (`providerStatus` `no-answer`, `busy` or
+`completed`) or `state: failed` (`failed` or `canceled`: it never rang, not a touch), with `durationSeconds`.
 
 `calls --after ISO_TIMESTAMP [--limit N]`, `recordings --call CALL_SID` and
 `recording --sid RECORDING_SID [--format mp3|wav]` read Twilio-retained call data on

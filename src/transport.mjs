@@ -113,8 +113,10 @@ export class Transport {
     if (raw?.sid !== callSid || raw.account_sid !== this.connection.accountSid || typeof raw.status !== 'string' || !/^[a-z][a-z-]{0,31}$/.test(raw.status)) throw fail('PROVIDER_RESPONSE', 'Call readback returned another call');
     if (!old) return null;
     const at = new Date(this.now()).toISOString(), seconds = /^\d{1,9}$/.test(String(raw.duration ?? '')) ? Number(raw.duration) : null;
-    const operation = {...old, state: ['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(raw.status) ? 'settled' : 'accepted',
-      providerStatus: raw.status, durationSeconds: seconds, updatedAt: at, lastStatusCheckAt: at};
+    // `failed` and `canceled` never rang (like a text that failed): their own state, so the state alone says the
+    // call was not a touch. `busy` rang or was declined at the handset, so it is a missed call like no-answer.
+    const state = ['failed', 'canceled'].includes(raw.status) ? 'failed' : ['completed', 'busy', 'no-answer'].includes(raw.status) ? 'settled' : 'accepted';
+    const operation = {...old, state, providerStatus: raw.status, durationSeconds: seconds, updatedAt: at, lastStatusCheckAt: at};
     this.store.saveOperation(operation);
     return operation;
   }

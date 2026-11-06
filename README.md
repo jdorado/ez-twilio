@@ -161,8 +161,9 @@ request; the same key and payload return the kept operation (`accepted`, with `p
 changed content under that key is `KEY_CONFLICT`, a lost response is `uncertain` (exit 5, never
 resubmitted) and a definitive refusal is `rejected` (exit 4, for example a number Twilio cannot
 call). A key names either a text or a ring, never both. Polling reads an unfinished ring back by its
-SID: when Twilio reports it finished the operation becomes `settled` with `providerStatus`
-(`no-answer`, `completed`, `busy`, `failed`, `canceled`) and `durationSeconds`. The `calls` read lists
+SID: when Twilio reports it finished, the operation becomes `settled` for `no-answer`, `busy`
+(a declined call is still a missed call) and `completed`, or `failed` for `failed` and `canceled`
+(it never rang, so it is not a touch), always with `providerStatus` and `durationSeconds`. The `calls` read lists
 a placed ring with its operation key in `operation` (null for other calls), and `doctor` reports
 `voice`, whether every configured number can place one. The plugin never decides whether a person
 should be called; the caller owns that, and any call may be subject to law and carrier rules.

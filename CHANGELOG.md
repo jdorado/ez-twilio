@@ -8,8 +8,8 @@ nobody who picks up is connected to anything: no audio, no webhook, no second re
 has the send contract: a durable operation under `--key`, reserved before the one provider request,
 the same key and payload read back the kept call, a lost response stays `uncertain` and is never
 submitted again, a definitive refusal is `rejected`. Polling reads the call back by its SID until
-Twilio reports it finished (state `settled`, `providerStatus` and `durationSeconds` on the
-operation). The `calls` read names the operation key of a call this plugin placed (`operation`,
+Twilio reports it finished: `settled` for `no-answer`, `busy` and `completed`, `failed` for `failed` and
+`canceled` (a call that never rang), with `providerStatus` and `durationSeconds` on the operation. The `calls` read names the operation key of a call this plugin placed (`operation`,
 null for any other call), so a consumer tells a ring from a conversation. `doctor` also reports
 `voice`: whether every configured number can place one. Nothing else changes: the journal, the
 native source protocol and state schema 1.

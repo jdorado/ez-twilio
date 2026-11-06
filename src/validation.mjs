@@ -48,13 +48,14 @@ export function config(input, now = Date.now()) {
     ...(input.messagingServiceSid ? {messagingServiceSid: input.messagingServiceSid} : {})};
 }
 // A ring: a call from our number that Twilio itself ends after `seconds` of ringing, or at once when
-// answered. 5..60: shorter is below what a handset registers, longer reaches the carrier's mailbox.
+// answered. 5..60 is the range this plugin accepts: under 5 a handset does not register the call. The
+// caller keeps it under the carrier's mailbox delay (about 20 s), or the call reaches voicemail.
 export const RING_DEFAULT_SECONDS = 10;
 export function ringInput(args, connection) {
   const to = phone(args.to), from = sender(connection, args.from);
   if (to === from) throw fail('INVALID_INPUT', 'The recipient must differ from the selected sender');
   return {kind: 'ring', key: key(args.key), accountSid: connection.accountSid, from, to,
-    seconds: integer(args.seconds ?? RING_DEFAULT_SECONDS, 5, 60, 'ring seconds')};
+    seconds: integer(args.seconds === undefined ? RING_DEFAULT_SECONDS : args.seconds, 5, 60, 'ring seconds')};
 }
 export function sendInput(args, connection) {
   const to = phone(args.to), from = sender(connection, args.from);

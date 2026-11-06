@@ -1,9 +1,9 @@
 ---
 name: twilio
-description: Send or read SMS through the configured Twilio account with polling, durable cursors and operation receipts, and read its calls and call recordings.
+description: Send or read SMS through the configured Twilio account with polling, durable cursors and operation receipts, place a missed-call ring, and read its calls and call recordings.
 ---
 
-# Twilio SMS and call reads
+# Twilio SMS, rings and call reads
 
 Use the registered `ez twilio` CLI; `--help` owns its exact argument contract.
 The resident container polls independently. Credentials enter only through private

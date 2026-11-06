@@ -49,7 +49,8 @@ A different account, capture boundary or reduced number set needs a separate pro
 `doctor` performs an authenticated read and verifies that the intended sender
 is SMS-capable and belongs to this account, for every configured number. This proves read access and binding,
 not delivery or regulatory readiness. It also reports `calls`: whether Calls and
-Recordings can be read (a bounded list each); `false` does not fail the SMS checks. It does not change Twilio number routing.
+Recordings can be read (a bounded list each), and `voice`: whether every configured number can
+place a ring; `false` on either does not fail the SMS checks. It does not change Twilio number routing.
 Use an authorized test phone and a sender ready for the intended destination
 before a live send.
 
@@ -111,8 +112,10 @@ ez twilio recording --sid RE00000000000000000000000000000000 --format mp3
 `calls` lists parent call legs that touch a configured number (inbound: `To`, outbound:
 `From`) with `startTime >= --after` (UTC ISO, inclusive), oldest first, `--limit` 1..100
 (default 50): `{calls:[{sid, accountSid, from, to, direction, status, startTime, endTime,
-durationSeconds, answeredBy}], complete}`. `direction` and `status` are Twilio's values;
-`endTime`, `durationSeconds` and `answeredBy` are null when Twilio has none. `complete`
+durationSeconds, answeredBy, operation}], complete}`. `direction` and `status` are Twilio's values;
+`endTime`, `durationSeconds` and `answeredBy` are null when Twilio has none, and `operation` is
+the key of the ring this plugin placed as that call (null for any other call, and for a ring whose
+outcome is unknown, which has no call id). `complete`
 is false when `--limit` cut the list. Child legs, calls not yet dialed and the other
 direction's copy of a call between two configured numbers are not listed. Twilio lists
 newest first and filters by whole UTC days, so each number and direction is read in day

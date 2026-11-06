@@ -23,7 +23,7 @@ export async function main(argv, options = {}) {
       recording: 'Media of a completed recording: {sid,format,contentType,bytes,sha256,data}; data is base64. Above 2621440 bytes (2.5 MiB) it fails RECORDING_TOO_LARGE; a recording that is not completed fails RECORDING_NOT_COMPLETED.',
       scope: 'Bounded, read-only pass-through of Twilio-retained data: not journaled, no webhooks, no writes. A call or recording Twilio does not find is NOT_FOUND.'},
     transport: 'One managed Docker service polls independently. No webhooks. Keep the operation key after uncertainty; never retry with a new key.',
-    exitCodes: {0:'ok',1:'internal',2:'invalid input or provider error',3:'auth/account',4:'refused',5:'uncertain send/service response'}};
+    exitCodes: {0:'ok',1:'internal',2:'invalid input or provider error',3:'auth/account',4:'refused',5:'uncertain send or ring/service response'}};
   if (command === '--version' && !rest.length) return {version: pkg.version};
   if (command === 'serve' && !rest.length) {
     if (!options.allowServe && process.env.EZ_TWILIO_SERVICE !== '1') throw fail('INVALID_INPUT','Start the registered container with ez plugins start twilio');

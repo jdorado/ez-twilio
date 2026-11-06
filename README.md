@@ -89,7 +89,9 @@ capture continues that scan. Failed pages never mark coverage complete. Regular
 scans overlap two days; daily full scans cover the configured activation boundary.
 Startup resumes the uncompleted scan or catches up from durable coverage. Invalid
 records/content conflicts are retained privately in quarantine and reported as
-coverage gaps while healthy records and later pages continue to be captured.
+coverage gaps while healthy records and later pages continue to be captured; a
+quarantined record that later captures leaves quarantine. A short-code or alphanumeric
+sender is captured as the other party; only our own number must be E.164.
 MMS metadata is retained as unsupported; media processing is
 not included. Status, lag, quarantine and uncertain-operation counts are visible
 without returning credentials or message bodies.

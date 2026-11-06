@@ -132,7 +132,7 @@ function httpFailure(status, value) {
 
 // Our own number is always E.164. The other party may be a short code or an alphanumeric
 // sender: real captured traffic, not an invalid record that would freeze coverage.
-const party = value => typeof value === 'string' && /^(?:\d{3,8}|[A-Za-z][A-Za-z0-9 ._-]{0,10})$/.test(value) ? value : phone(value);
+const party = value => typeof value === 'string' && /^(?:\d{3,8}|(?=.*[A-Za-z])[A-Za-z0-9 ._-]{1,11})$/.test(value) ? value : phone(value);
 
 export function message(raw, connection, now = Date.now()) {
   if (!raw || !sid(raw.sid, '(?:SM|MM)') || raw.account_sid !== connection.accountSid ||

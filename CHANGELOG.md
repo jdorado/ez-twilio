@@ -6,7 +6,10 @@ A text from a short code or an alphanumeric sender is captured instead of quaran
 was rejected as "not E.164", and because a quarantined record keeps a scan from completing,
 polling coverage stopped advancing on the first such text and never recovered on its own.
 Our own number stays strictly E.164; only the other party may be a short code (3 to 8
-digits) or an alphanumeric sender (up to 11 characters). Replying to one is still refused.
+digits) or an alphanumeric sender (up to 11 characters with at least one letter, so
+`1Password` counts). Replying to one is still refused. A quarantined record that later
+captures is removed from quarantine, so the count falls and the next scan completes
+(an already-quarantined short-code text clears itself on the first scan after the upgrade).
 Nothing else changes: the journal, the native source protocol and state schema 1.
 
 ## 0.1.0-beta.1.rc.9 — unpublished candidate

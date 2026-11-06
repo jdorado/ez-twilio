@@ -14,15 +14,16 @@ export async function main(argv, options = {}) {
   if (!command || command === '--help') return {commands: [
     'init < private-connection.json', 'doctor', 'status', 'sync [--max-pages 1..200]',
     'inbox [--after CURSOR --generation STORE_GENERATION] [--limit 1..100]', 'acknowledge --consumer NAME --cursor CURSOR --generation ID',
-    'message get MESSAGE_SID', 'calls --after ISO_TIMESTAMP [--limit 1..100]', 'recordings --call CALL_SID', 'recording --sid RECORDING_SID [--format mp3|wav]', 'send [--from OUR_E164] --to E164 --text TEXT --key KEY [--preview]', 'operation --key KEY',
+    'message get MESSAGE_SID', 'calls --after ISO_TIMESTAMP [--limit 1..100]', 'recordings --call CALL_SID', 'recording --sid RECORDING_SID [--format mp3|wav]', 'send [--from OUR_E164] --to E164 --text TEXT --key KEY [--preview]', 'ring [--from OUR_E164] --to E164 --key KEY [--seconds 5..60] [--preview]', 'operation --key KEY',
     'backup', 'recovery acknowledge --reference OWNER_RECONCILIATION',
   ], configuration: {required: ['accountSid','sender or senders[]'], credentials: 'apiKeySid + apiKeySecret, or authToken; stdin only', optional: ['messagingServiceSid','startAt','pollSeconds'], senders: 'Multiple configured numbers share one poller. Select --from when more than one is configured; selection policy belongs to the caller.'},
-    reads: {calls: 'Parent call legs on configured numbers with startTime >= --after (UTC ISO; inclusive), oldest first, --limit default 50: {calls:[{sid,accountSid,from,to,direction,status,startTime,endTime,durationSeconds,answeredBy}],complete}. complete is false when --limit cut the list.',
+    ring: 'A missed call: one call from our number that Twilio itself ends after --seconds (default 10) of ringing, or at once if answered; no audio, no webhook. Returns the operation {key,state,providerCallId,providerStatus}: state accepted while it is in progress, settled when it ended as no-answer, busy or completed, failed when Twilio reports failed or canceled (it never rang), always with providerStatus. Same key, same call: a repeat reads the kept operation. The call reaches the mailbox only if the carrier answers before --seconds; keep it well under the carrier mailbox delay (about 20 seconds).',
+    reads: {calls: 'Parent call legs on configured numbers with startTime >= --after (UTC ISO; inclusive), oldest first, --limit default 50: {calls:[{sid,accountSid,from,to,direction,status,startTime,endTime,durationSeconds,answeredBy,operation}],complete}; operation is the key of the ring this plugin placed as that call, else null. complete is false when --limit cut the list.',
       recordings: 'Recordings of one call: {recordings:[{sid,callSid,status,durationSeconds,channels,source,createdAt,mediaFormats}]}.',
       recording: 'Media of a completed recording: {sid,format,contentType,bytes,sha256,data}; data is base64. Above 2621440 bytes (2.5 MiB) it fails RECORDING_TOO_LARGE; a recording that is not completed fails RECORDING_NOT_COMPLETED.',
       scope: 'Bounded, read-only pass-through of Twilio-retained data: not journaled, no webhooks, no writes. A call or recording Twilio does not find is NOT_FOUND.'},
     transport: 'One managed Docker service polls independently. No webhooks. Keep the operation key after uncertainty; never retry with a new key.',
-    exitCodes: {0:'ok',1:'internal',2:'invalid input or provider error',3:'auth/account',4:'refused',5:'uncertain send/service response'}};
+    exitCodes: {0:'ok',1:'internal',2:'invalid input or provider error',3:'auth/account',4:'refused',5:'uncertain send or ring/service response'}};
   if (command === '--version' && !rest.length) return {version: pkg.version};
   if (command === 'serve' && !rest.length) {
     if (!options.allowServe && process.env.EZ_TWILIO_SERVICE !== '1') throw fail('INVALID_INPUT','Start the registered container with ez plugins start twilio');
@@ -38,6 +39,7 @@ export async function main(argv, options = {}) {
   else if (command === 'inbox') values = flags(rest, {after:'number',limit:'number',generation:'string'});
   else if (command === 'sync') { const parsed = flags(rest, {'max-pages':'number'}); values = {maxPages: parsed['max-pages']}; }
   else if (command === 'send') values = flags(rest, {from:'string',to:'string',text:'string',key:'string',preview:'boolean'});
+  else if (command === 'ring') values = flags(rest, {from:'string',to:'string',key:'string',seconds:'number',preview:'boolean'});
   else if (command === 'calls') values = flags(rest,{after:'string',limit:'number'});
   else if (command === 'recordings') values = flags(rest,{call:'string'});
   else if (command === 'recording') values = flags(rest,{sid:'string',format:'string'});
@@ -46,6 +48,8 @@ export async function main(argv, options = {}) {
   else if (command === 'recovery' && rest[0] === 'acknowledge') { name = 'recovery-acknowledge'; values = flags(rest.slice(1),{reference:'string'}); }
   else throw fail('INVALID_INPUT','Invalid command; read --help');
   const result = await client(socketPath,name,values);
+  if (command === 'ring' && result.state === 'uncertain') throw fail('UNCERTAIN_RING','Ring outcome is uncertain; inspect operation with the same key',5,{key:result.key,providerCallId:result.providerCallId});
+  if (command === 'ring' && result.state === 'rejected') throw fail('RING_REJECTED','Provider rejected this operation; inspect its receipt',4,{key:result.key,reason:result.error?.code,...(result.error?.httpStatus ? {httpStatus:result.error.httpStatus} : {}),...(result.error?.providerCode ? {providerCode:result.error.providerCode} : {})});
   if (command === 'send' && result.state === 'uncertain') throw fail('UNCERTAIN_SEND','Send outcome is uncertain; inspect operation with the same key',5,{key:result.key,providerMessageId:result.providerMessageId});
   if (command === 'send' && result.state === 'rejected') throw fail('SEND_REJECTED','Provider rejected this operation; inspect its receipt',4,{key:result.key,...result.error});
   return result;
@@ -56,7 +60,13 @@ function flags(args, spec) {
     const name = args[i].startsWith('--') ? args[i].slice(2) : '';
     if (!spec[name] || result[name] !== undefined) throw fail('INVALID_INPUT','Unknown or repeated argument');
     if (spec[name] === 'boolean') result[name] = true;
-    else { if (++i >= args.length) throw fail('INVALID_INPUT','Argument value missing'); result[name] = spec[name] === 'number' ? Number(args[i]) : args[i]; }
+    else {
+      if (++i >= args.length) throw fail('INVALID_INPUT','Argument value missing');
+      // A malformed number would reach the service as JSON null, which a default (`??`) turns into a real value.
+      // Every numeric flag is a whole number of digits (a cursor, a limit, a page bound, seconds).
+      if (spec[name] === 'number' && !/^\d{1,15}$/.test(args[i])) throw fail('INVALID_INPUT','Use a non-negative whole number');
+      result[name] = spec[name] === 'number' ? Number(args[i]) : args[i];
+    }
   }
   return result;
 }

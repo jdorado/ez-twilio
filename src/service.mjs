@@ -89,10 +89,15 @@ export async function serve(options = {}) {
     if (command === 'doctor') return {...await current.provider.doctor(), calls: await readable(current.provider), configured: true, polling: true, pollSeconds: current.connection.pollSeconds, ...store.status()};
     if (command === 'sync') return current.sync(args.maxPages ?? 20);
     if (command === 'message') return current.refresh(args.id);
-    if (command === 'calls') return calls(current.provider, current.connection, args, now());
+    if (command === 'calls') {
+      // A call this plugin placed (a ring) names its operation key: the consumer tells it from other calls.
+      const result = await calls(current.provider, current.connection, args, now());
+      return {...result, calls: result.calls.map(row => ({...row, operation: store.operationKey(row.sid)}))};
+    }
     if (command === 'recordings') return recordings(current.provider, current.connection, args);
     if (command === 'recording') return recordingMedia(current.provider, current.connection, args);
     if (command === 'send') return current.send(args);
+    if (command === 'ring') return current.ring(args);
     if (command === 'events-head') return {cursor: store.head(), accountId: current.accountId(), taskProtocol: 'message-v1', persistentWatch: true, releaseEvents: true};
     if (command === 'events') return current.events(args.after);
     if (command === 'events-check') return current.check(args.ids);

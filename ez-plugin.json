@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "twilio",
-  "version": "0.1.0-beta.1.rc.10",
-  "description": "Send and poll Twilio SMS on configured numbers with durable cursors and receipts; read calls and call recordings",
+  "version": "0.1.0-beta.1.rc.11",
+  "description": "Send and poll Twilio SMS on configured numbers with durable cursors and receipts; place a missed-call ring; read calls and call recordings",
   "example": "twilio inbox --after 0 --limit 20",
   "commands": {
     "twilio": {

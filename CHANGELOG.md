@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.11 — unpublished candidate
+
+`ring`: a missed call. One Calls create request from a configured number with a ring timeout and an
+inline `<Hangup/>`, so Twilio itself stops ringing after `--seconds` (5 to 60, default 10) and
+nobody who picks up is connected to anything: no audio, no webhook, no second request to cancel. It
+has the send contract: a durable operation under `--key`, reserved before the one provider request,
+the same key and payload read back the kept call, a lost response stays `uncertain` and is never
+submitted again, a definitive refusal is `rejected`. Polling reads the call back by its SID until
+Twilio reports it finished: `settled` for `no-answer`, `busy` and `completed`, `failed` for `failed` and
+`canceled` (a call that never rang), with `providerStatus` and `durationSeconds` on the operation. The `calls` read names the operation key of a call this plugin placed (`operation`,
+null for any other call), so a consumer tells a ring from a conversation. `doctor` also reports
+`voice`: whether every configured number can place one. Nothing else changes: the journal, the
+native source protocol and state schema 1.
+
 ## 0.1.0-beta.1.rc.10 — unpublished candidate
 
 A text from a short code or an alphanumeric sender is captured instead of quarantined. It

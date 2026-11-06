@@ -1,6 +1,6 @@
 import {Provider, message} from './provider.mjs';
 import {fail, publicError} from './errors.mjs';
-import {integer, key, phone, sender, senders, sendInput} from './validation.mjs';
+import {integer, key, phone, sender, senders, sendInput, ringInput} from './validation.mjs';
 import {hash} from './store.mjs';
 
 const DAY = 86400000;
@@ -87,7 +87,7 @@ export class Transport {
       // A failed status read must not prevent capture of new incoming messages.
       const statusErrors = [];
       for (const operation of this.store.unsettled()) {
-        try { await this.refresh(operation.providerMessageId); }
+        try { await (operation.providerCallId ? this.refreshCall(operation.providerCallId) : this.refresh(operation.providerMessageId)); }
         catch (error) {
           this.store.saveOperation({...operation,lastStatusCheckAt:new Date(this.now()).toISOString()});
           statusErrors.push({key: operation.key, code: publicError(error).code});
@@ -106,6 +106,43 @@ export class Transport {
     if (row.id !== id) throw fail('PROVIDER_RESPONSE', 'Message readback returned another SID');
     this.store.transaction(() => this.store.capture(row));
     return row;
+  }
+  // A call's own status, kept on its operation until Twilio reports it finished. Calls are not journaled.
+  async refreshCall(callSid) {
+    const raw = await this.provider.getCall(callSid), key = this.store.operationKey(callSid), old = key && this.store.operation(key);
+    if (raw?.sid !== callSid || raw.account_sid !== this.connection.accountSid || typeof raw.status !== 'string' || !/^[a-z][a-z-]{0,31}$/.test(raw.status)) throw fail('PROVIDER_RESPONSE', 'Call readback returned another call');
+    if (!old) return null;
+    const at = new Date(this.now()).toISOString(), seconds = /^\d{1,9}$/.test(String(raw.duration ?? '')) ? Number(raw.duration) : null;
+    // `failed` and `canceled` never rang (like a text that failed): their own state, so the state alone says the
+    // call was not a touch. `busy` rang or was declined at the handset, so it is a missed call like no-answer.
+    const state = ['failed', 'canceled'].includes(raw.status) ? 'failed' : ['completed', 'busy', 'no-answer'].includes(raw.status) ? 'settled' : 'accepted';
+    const operation = {...old, state, providerStatus: raw.status, durationSeconds: seconds, updatedAt: at, lastStatusCheckAt: at};
+    this.store.saveOperation(operation);
+    return operation;
+  }
+  async ring(args) {
+    const payload = ringInput(args, this.connection);
+    if (args.preview === true) return {preview: true, payload};
+    const reservation = this.store.reserve(payload, new Date(this.now()).toISOString());
+    if (reservation.existing) return reservation.operation;
+    let operation = reservation.operation;
+    try {
+      const response = await this.provider.createCall(payload);
+      // Persist any returned SID before interpreting optional provider fields.
+      if (typeof response?.sid !== 'string' || !/^CA[a-fA-F0-9]{32}$/.test(response.sid) || response.account_sid !== payload.accountSid)
+        throw fail('PROVIDER_RESPONSE', 'Provider did not return a bound Call SID', 5);
+      operation = {...operation, state: 'accepted', providerCallId: response.sid, providerStatus: typeof response.status === 'string' ? response.status : null,
+        updatedAt: new Date(this.now()).toISOString()};
+      this.store.saveOperation(operation);
+      return operation;
+    } catch (error) {
+      const details = publicError(error);
+      operation = {...operation, state: details.definitive === true ? 'rejected' : 'uncertain',
+        error: {code: details.code, ...(details.httpStatus ? {httpStatus: details.httpStatus} : {}), ...(details.providerCode ? {providerCode: details.providerCode} : {})},
+        updatedAt: new Date(this.now()).toISOString()};
+      this.store.saveOperation(operation);
+      return operation;
+    }
   }
   async send(args) {
     const payload = sendInput(args, this.connection);

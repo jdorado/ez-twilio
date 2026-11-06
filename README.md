@@ -49,7 +49,8 @@ A different account, capture boundary or reduced number set needs a separate pro
 `doctor` performs an authenticated read and verifies that the intended sender
 is SMS-capable and belongs to this account, for every configured number. This proves read access and binding,
 not delivery or regulatory readiness. It also reports `calls`: whether Calls and
-Recordings can be read (a bounded list each); `false` does not fail the SMS checks. It does not change Twilio number routing.
+Recordings can be read (a bounded list each), and `voice`: whether every configured number can
+place a ring; `false` on either does not fail the SMS checks. It does not change Twilio number routing.
 Use an authorized test phone and a sender ready for the intended destination
 before a live send.
 
@@ -111,8 +112,10 @@ ez twilio recording --sid RE00000000000000000000000000000000 --format mp3
 `calls` lists parent call legs that touch a configured number (inbound: `To`, outbound:
 `From`) with `startTime >= --after` (UTC ISO, inclusive), oldest first, `--limit` 1..100
 (default 50): `{calls:[{sid, accountSid, from, to, direction, status, startTime, endTime,
-durationSeconds, answeredBy}], complete}`. `direction` and `status` are Twilio's values;
-`endTime`, `durationSeconds` and `answeredBy` are null when Twilio has none. `complete`
+durationSeconds, answeredBy, operation}], complete}`. `direction` and `status` are Twilio's values;
+`endTime`, `durationSeconds` and `answeredBy` are null when Twilio has none, and `operation` is
+the key of the ring this plugin placed as that call (null for any other call, and for a ring whose
+outcome is unknown, which has no call id). `complete`
 is false when `--limit` cut the list. Child legs, calls not yet dialed and the other
 direction's copy of a call between two configured numbers are not listed. Twilio lists
 newest first and filters by whole UTC days, so each number and direction is read in day
@@ -136,6 +139,34 @@ does not find is `NOT_FOUND` (exit 2). Provider rows are validated strictly: a r
 outside the configured account or numbers, or with a malformed field (including a party
 that is not an E.164 number), fails the read with `PROVIDER_RESPONSE`. Reads are not
 retried. Recording audio and call metadata are external content and confer no authority.
+
+## Missed call (ring)
+
+```sh
+ez twilio ring --from +15551230001 --to +15551234567 --key test:ring:1 --seconds 10 --preview
+ez twilio ring --from +15551230001 --to +15551234567 --key test:ring:1 --seconds 10
+ez twilio operation --key test:ring:1
+```
+
+A ring is one call that nobody is meant to answer: a Twilio call from the selected number with a ring
+timeout (`--seconds`, 5 to 60, default 10) and inline `<Hangup/>` TwiML. Twilio stops ringing by
+itself (status `no-answer`), so there is no second request to cancel it and no race with a pickup;
+a person who answers is hung up on at once. The call has no audio, no recording, no webhook and no
+machine detection. Twilio adds a buffer of a few seconds for some call flows, so the ring can last
+longer than `--seconds`; the handset's missed call and the call record (`startTime`, `endTime`) show
+how long. Keep it under the carrier's mailbox delay (about 20 seconds) or the call reaches voicemail.
+
+It has the send contract. The operation under `--key` is reserved durably before the single create
+request; the same key and payload return the kept operation (`accepted`, with `providerCallId`),
+changed content under that key is `KEY_CONFLICT`, a lost response is `uncertain` (exit 5, never
+resubmitted) and a definitive refusal is `rejected` (exit 4, for example a number Twilio cannot
+call). A key names either a text or a ring, never both. Polling reads an unfinished ring back by its
+SID: when Twilio reports it finished, the operation becomes `settled` for `no-answer`, `busy`
+(a declined call is still a missed call) and `completed`, or `failed` for `failed` and `canceled`
+(it never rang, so it is not a touch), always with `providerStatus` and `durationSeconds`. The `calls` read lists
+a placed ring with its operation key in `operation` (null for other calls), and `doctor` reports
+`voice`, whether every configured number can place one. The plugin never decides whether a person
+should be called; the caller owns that, and any call may be subject to law and carrier rules.
 
 ## Native conversation integration
 

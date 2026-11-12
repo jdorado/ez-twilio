@@ -112,7 +112,9 @@ ez twilio recording --sid RE00000000000000000000000000000000 --format mp3
 `calls` lists parent call legs that touch a configured number (inbound: `To`, outbound:
 `From`) with `startTime >= --after` (UTC ISO, inclusive), oldest first, `--limit` 1..100
 (default 50): `{calls:[{sid, accountSid, from, to, direction, status, startTime, endTime,
-durationSeconds, answeredBy, operation}], complete}`. `direction` and `status` are Twilio's values;
+durationSeconds, answeredBy, errorCode, operation}], complete}`. `direction` and `status` are Twilio's values;
+`errorCode` is why Twilio failed a call that never rang (status `failed`): the code of its first
+error notification, such as 13224 (not a valid phone number) or 32009 (the carrier refused it), else null;
 `endTime`, `durationSeconds` and `answeredBy` are null when Twilio has none, and `operation` is
 the key of the ring this plugin placed as that call (null for any other call, and for a ring whose
 outcome is unknown, which has no call id). `complete`

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.12 — unpublished candidate
+
+The `calls` read says why Twilio failed a call: `errorCode`, the code of the call's first error
+notification (for example 13224, not a valid phone number, or 32009, the carrier refused the call),
+read only for a call whose status is `failed` and null otherwise or when Twilio logged none. A
+consumer can then tell a dead or refusing number from a fault on its own side. Nothing else changes.
+
 ## 0.1.0-beta.1.rc.11 — unpublished candidate
 
 `ring`: a missed call. One Calls create request from a configured number with a ring timeout and an

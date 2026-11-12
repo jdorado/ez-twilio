@@ -37,7 +37,16 @@ function call(raw, connection, line, inbound) {
   if (typeof raw.status !== 'string' || !/^[a-z][a-z-]{0,31}$/.test(raw.status) ||
       !(raw.answered_by === null || raw.answered_by === undefined || typeof raw.answered_by === 'string' && /^[a-z_]{1,32}$/.test(raw.answered_by))) throw invalid('call');
   return {sid: raw.sid, accountSid: raw.account_sid, from, to, direction: raw.direction, status: raw.status, startTime,
-    endTime: time(raw.end_time, 'call'), durationSeconds: seconds(raw.duration, 'call'), answeredBy: raw.answered_by ?? null};
+    endTime: time(raw.end_time, 'call'), durationSeconds: seconds(raw.duration, 'call'), answeredBy: raw.answered_by ?? null, errorCode: null};
+}
+
+// Why Twilio failed a call (it never rang): the code of the call's first error notification, e.g.
+// 13224 (not a valid phone number) or 32009 (the carrier refused it); null when Twilio logged none.
+async function failure(provider, callSid) {
+  const page = await provider.page(`${provider.root}/Calls/${callSid}/Notifications.json?PageSize=20`, `Calls/${callSid}/Notifications`, 'notifications');
+  const rows = page.notifications.filter(row => row && row.call_sid === callSid && /^\d{4,6}$/.test(String(row.error_code ?? '')));
+  const error = rows.find(row => String(row.log) === '0') ?? rows[0];
+  return error ? Number(error.error_code) : null;
 }
 
 // Every number in both directions over whole UTC days [lo, hi]; a stream over the page bound is reported, not truncated.
@@ -79,8 +88,9 @@ export async function calls(provider, connection, args, now) {
     if (hi === end || found.size >= limit) break;
     lo = hi + DAY; hi = end;
   }
-  const rows = [...found.values()].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime) || (a.sid < b.sid ? -1 : 1));
-  return {calls: rows.slice(0, limit), complete: hi === end && rows.length <= limit};
+  const rows = [...found.values()].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime) || (a.sid < b.sid ? -1 : 1)).slice(0, limit);
+  for (const row of rows) if (row.status === 'failed') row.errorCode = await failure(provider, row.sid);
+  return {calls: rows, complete: hi === end && found.size <= limit};
 }
 
 function recording(raw, connection) {

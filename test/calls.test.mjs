@@ -27,7 +27,7 @@ const serving = (connection, value) => new Provider(connection, {fetch: async ()
 const redirect = location => new Response(null, {status: 302, headers: {location}});
 
 // A synthetic Twilio: lists are newest first, date filters are whole UTC days (inclusive), pages are `pageSize` rows.
-function twilio({calls: callRows = [], recordings: recRows = [], media = {}, external, pageSize = 2} = {}) {
+function twilio({calls: callRows = [], recordings: recRows = [], notifications = {}, media = {}, external, pageSize = 2} = {}) {
   const requests = [], denied = new Set();
   const json = (value, status = 200) => Response.json(value, {status});
   const missing = () => json({code: 20404, message: 'The requested resource was not found', status: 404}, 404);
@@ -53,6 +53,7 @@ function twilio({calls: callRows = [], recordings: recRows = [], media = {}, ext
     }
     if (path === '/Recordings.json') return json({recordings: recRows.slice(0, 1), next_page_uri: null});
     if ((m = path.match(/^\/Calls\/(CA\w+)\/Recordings\.json$/))) return callRows.some(row => row.sid === m[1]) ? paged('recordings', recRows.filter(row => row.call_sid === m[1])) : missing();
+    if ((m = path.match(/^\/Calls\/(CA\w+)\/Notifications\.json$/))) return json({notifications: notifications[m[1]] ?? [], next_page_uri: null});
     if ((m = path.match(/^\/Recordings\/(RE\w+)\.json$/))) { const row = recRows.find(item => item.sid === m[1]); return row ? json(row) : missing(); }
     if ((m = path.match(/^\/Recordings\/(RE\w+)\.(mp3|wav)$/))) return (media[m[1]] ?? (() => audio('synthetic audio')))(m[2]);
     return missing();
@@ -75,9 +76,9 @@ test('calls merge both directions of every number, keep parent legs only, filter
   assert.deepEqual(result.calls.map(row=>row.sid),[callSid(1),callSid(4),callSid(2),callSid(7)]);
   assert.equal(result.complete,true);
   assert.deepEqual(result.calls[0],{sid:callSid(1),accountSid,from:remote,to:lineA,direction:'inbound',status:'completed',
-    startTime:'2026-10-24T10:00:00.000Z',endTime:'2026-10-24T10:01:00.000Z',durationSeconds:60,answeredBy:null});
+    startTime:'2026-10-24T10:00:00.000Z',endTime:'2026-10-24T10:01:00.000Z',durationSeconds:60,answeredBy:null,errorCode:null});
   assert.deepEqual(result.calls[3],{sid:callSid(7),accountSid,from:remote,to:lineB,direction:'inbound',status:'no-answer',
-    startTime:'2026-10-25T08:00:00.000Z',endTime:null,durationSeconds:null,answeredBy:'machine_start'});
+    startTime:'2026-10-25T08:00:00.000Z',endTime:null,durationSeconds:null,answeredBy:'machine_start',errorCode:null});
   const streams=sim.requests.map(request=>`${request.query.has('To')?'To':'From'}=${request.query.get('To')??request.query.get('From')}`);
   for(const stream of [`To=${lineA}`,`From=${lineA}`,`To=${lineB}`,`From=${lineB}`])assert(streams.includes(stream),stream);
   assert(sim.requests.every(request=>request.host==='api.twilio.com'&&request.authorization?.startsWith('Basic ')));
@@ -208,4 +209,15 @@ test('managed service exposes the three reads over the socket, keeps stable erro
   assert.equal(running.store.status().messages,0);assert.equal(running.store.head(),head);
   sim.denied.add('Calls');
   const doctor=await cli(['doctor']);assert.equal(doctor.sms,true);assert.equal(doctor.calls,false);
+});
+
+test('calls say why Twilio failed a call, from its first error notification, and read nothing for other calls',async()=>{
+  const out=(n,status)=>callRow(n,'2026-10-24T10:0'+n+':00Z',{from:lineA,to:remote,direction:'outbound-api',status,duration:'0'});
+  const note=(n,code,log)=>({sid:`NO${String(n).padStart(32,'0')}`,account_sid:accountSid,call_sid:callSid(n),error_code:code,log});
+  const sim=twilio({calls:[out(1,'failed'),out(2,'no-answer'),out(3,'failed'),out(4,'canceled')],
+    notifications:{[callSid(1)]:[note(1,'21212','1'),note(1,'32009','0')]}});
+  const result=await calls(sim.provider(single),single,{after:'2026-10-24T00:00:00.000Z'},NOW);
+  assert.deepEqual(result.calls.map(row=>[row.status,row.errorCode]),[['failed',32009],['no-answer',null],['failed',null],['canceled',null]]);
+  const read=sim.requests.filter(r=>r.pathname.endsWith('/Notifications.json')).map(r=>r.pathname.split('/')[5]);
+  assert.deepEqual(read,[callSid(1),callSid(3)]);
 });

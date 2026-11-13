@@ -27,7 +27,7 @@ const serving = (connection, value) => new Provider(connection, {fetch: async ()
 const redirect = location => new Response(null, {status: 302, headers: {location}});
 
 // A synthetic Twilio: lists are newest first, date filters are whole UTC days (inclusive), pages are `pageSize` rows.
-function twilio({calls: callRows = [], recordings: recRows = [], media = {}, external, pageSize = 2} = {}) {
+function twilio({calls: callRows = [], recordings: recRows = [], notifications = {}, media = {}, external, pageSize = 2} = {}) {
   const requests = [], denied = new Set();
   const json = (value, status = 200) => Response.json(value, {status});
   const missing = () => json({code: 20404, message: 'The requested resource was not found', status: 404}, 404);
@@ -53,6 +53,7 @@ function twilio({calls: callRows = [], recordings: recRows = [], media = {}, ext
     }
     if (path === '/Recordings.json') return json({recordings: recRows.slice(0, 1), next_page_uri: null});
     if ((m = path.match(/^\/Calls\/(CA\w+)\/Recordings\.json$/))) return callRows.some(row => row.sid === m[1]) ? paged('recordings', recRows.filter(row => row.call_sid === m[1])) : missing();
+    if ((m = path.match(/^\/Calls\/(CA\w+)\/Notifications\.json$/))) return json({notifications: notifications[m[1]] ?? [], next_page_uri: null});
     if ((m = path.match(/^\/Recordings\/(RE\w+)\.json$/))) { const row = recRows.find(item => item.sid === m[1]); return row ? json(row) : missing(); }
     if ((m = path.match(/^\/Recordings\/(RE\w+)\.(mp3|wav)$/))) return (media[m[1]] ?? (() => audio('synthetic audio')))(m[2]);
     return missing();
@@ -75,9 +76,9 @@ test('calls merge both directions of every number, keep parent legs only, filter
   assert.deepEqual(result.calls.map(row=>row.sid),[callSid(1),callSid(4),callSid(2),callSid(7)]);
   assert.equal(result.complete,true);
   assert.deepEqual(result.calls[0],{sid:callSid(1),accountSid,from:remote,to:lineA,direction:'inbound',status:'completed',
-    startTime:'2026-10-24T10:00:00.000Z',endTime:'2026-10-24T10:01:00.000Z',durationSeconds:60,answeredBy:null});
+    startTime:'2026-10-24T10:00:00.000Z',endTime:'2026-10-24T10:01:00.000Z',durationSeconds:60,answeredBy:null,errorCode:null});
   assert.deepEqual(result.calls[3],{sid:callSid(7),accountSid,from:remote,to:lineB,direction:'inbound',status:'no-answer',
-    startTime:'2026-10-25T08:00:00.000Z',endTime:null,durationSeconds:null,answeredBy:'machine_start'});
+    startTime:'2026-10-25T08:00:00.000Z',endTime:null,durationSeconds:null,answeredBy:'machine_start',errorCode:null});
   const streams=sim.requests.map(request=>`${request.query.has('To')?'To':'From'}=${request.query.get('To')??request.query.get('From')}`);
   for(const stream of [`To=${lineA}`,`From=${lineA}`,`To=${lineB}`,`From=${lineB}`])assert(streams.includes(stream),stream);
   assert(sim.requests.every(request=>request.host==='api.twilio.com'&&request.authorization?.startsWith('Basic ')));
@@ -108,12 +109,76 @@ test('a page cap never hides the oldest calls: dense history is read oldest firs
   await assert.rejects(calls(twilio({calls:day}).provider(single),single,{after:'2026-10-20T00:00:00Z'},NOW),error=>error.code==='PROVIDER_RESPONSE'&&/UTC day/.test(error.message));
 });
 
+// Regression (Quarre, 2026-11-12): one inbound call with a withheld caller ID (`from` is the word 'anonymous') failed the whole
+// read with PROVIDER_RESPONSE, so the consumer's cursor stopped there and every later call stayed unreadable.
+test('a call whose other party is not an E.164 number is returned as it is and never fails the read',async()=>{
+  const rows=[
+    callRow(1,'2026-10-24T09:00:00Z'),
+    callRow(2,'2026-10-24T09:10:00Z',{from:'anonymous'}),
+    callRow(3,'2026-10-24T09:20:00Z',{from:'+464'}),
+    callRow(4,'2026-10-24T09:30:00Z',{from:'client:alice'}),
+    callRow(5,'2026-10-24T09:40:00Z',{from:lineA,to:'sip:desk@example.com',direction:'outbound-api'}),
+    callRow(6,'2026-10-24T09:50:00Z',{from:lineA,to:remote,direction:'outbound-api'}),
+  ];
+  const result=await calls(twilio({calls:rows,pageSize:10}).provider(single),single,{after:'2026-10-24T00:00:00Z'},NOW);
+  assert.deepEqual(result.calls.map(row=>row.sid),rows.map(row=>row.sid));
+  assert.deepEqual(result.calls.map(row=>row.from),[remote,'anonymous','+464','client:alice',lineA,lineA]);
+  assert.deepEqual(result.calls.map(row=>row.to),[lineA,lineA,lineA,lineA,'sip:desk@example.com',remote]);
+  assert.equal(result.complete,true);
+});
+
+test('the other party is bounded and never rejected, so no value of it can stall a read',async()=>{
+  const odd=['ACME Corp','sip:+15551230009@host;user=phone','a'.repeat(80),'été','  padded  ','',null,15551230002];
+  const rows=odd.map((from,n)=>callRow(n+1,`2026-10-24T09:${String(n).padStart(2,'0')}:00Z`,{from}));
+  const result=await calls(twilio({calls:rows,pageSize:10}).provider(single),single,{after:'2026-10-24T00:00:00Z'},NOW);
+  assert.equal(result.calls.length,odd.length);
+  assert.deepEqual(result.calls.map(row=>row.from),['ACME Corp','sip:+15551230009@host;user=phone','a'.repeat(64),'?t?','padded','unknown','unknown','unknown']);
+  for(const row of result.calls)assert.match(row.from,/^[\x20-\x7E]{1,64}$/);
+});
+
+test('a notifications lookup Twilio refuses for good leaves errorCode null and never stops the read; a transient one still fails it',async()=>{
+  const failed=n=>callRow(n,`2026-10-24T10:0${n}:00Z`,{from:lineA,to:remote,direction:'outbound-api',status:'failed',duration:'0'});
+  const rows=[callRow(1,'2026-10-24T09:00:00Z'),failed(2),failed(3)];
+  const serve=notes=>new Provider(single,{fetch:async href=>{
+    const url=new URL(href);
+    if(url.pathname.endsWith('/Notifications.json'))return notes(url);
+    return Response.json({calls:rows,next_page_uri:null});
+  }});
+  const after='2026-10-24T00:00:00Z',codes=result=>result.calls.map(row=>row.errorCode);
+  // Refused for good: a key without Notifications access, the resource gone, or a page that is no longer a notifications page.
+  for(const [name,answer] of Object.entries({forbidden:()=>Response.json({code:20003,message:'denied'},{status:403}),
+    removed:()=>Response.json({code:20404,message:'gone'},{status:404}),'bad page':()=>Response.json({notifications:'none',next_page_uri:null}),
+    'forbidden without JSON':()=>new Response('<html>Forbidden</html>',{status:403}),'removed without body':()=>new Response('',{status:404})})){
+    const result=await calls(serve(answer),single,{after},NOW);
+    assert.deepEqual(codes(result),[null,null,null],name);assert.equal(result.calls.length,3,name);
+  }
+  // A passing fault fails the read so the consumer retries it and the code is not lost for good.
+  for(const [name,answer] of Object.entries({'server error':()=>Response.json({},{status:503}),throttled:()=>Response.json({},{status:429}),
+    'request timeout':()=>Response.json({},{status:408}),interrupted:()=>{throw new Error('socket hang up');},
+    // A gateway, CDN or proxy answers in HTML, text or nothing: its status still says it passes.
+    'gateway page':()=>new Response('<html>Bad Gateway</html>',{status:502}),'empty 503':()=>new Response('',{status:503}),
+    'throttled page':()=>new Response('<html>Slow down</html>',{status:429}),'text 500':()=>new Response('upstream error',{status:500})}))
+    await assert.rejects(calls(serve(answer),single,{after},NOW),error=>['PROVIDER_HTTP','PROVIDER_UNAVAILABLE'].includes(error.code),name);
+});
+
+test('a read keeps its HTTP status when the answer is not JSON; a write stays PROVIDER_RESPONSE, its outcome uncertain',async()=>{
+  const answer=(body,status)=>new Provider(single,{fetch:async()=>new Response(body,{status})});
+  await assert.rejects(answer('<html>Bad Gateway</html>',502).request(`${root}/Calls.json`),
+    error=>error.code==='PROVIDER_HTTP'&&error.details.httpStatus===502&&error.details.definitive===false);
+  await assert.rejects(answer('',403).request(`${root}/Calls.json`),error=>error.code==='PROVIDER_AUTH'&&error.details.definitive===true);
+  // A write is never judged from a body that is not Twilio's: no `definitive`, so the operation stays uncertain.
+  for(const [body,status] of [['<html>Bad Gateway</html>',502],['',403],['<html>Bad Request</html>',400]])
+    await assert.rejects(answer(body,status).request(`${root}/Messages.json`,{To:remote}),
+      error=>error.code==='PROVIDER_RESPONSE'&&error.details.definitive===undefined,`write ${status}`);
+  await assert.rejects(answer('not json',200).request(`${root}/Calls.json`),error=>error.code==='PROVIDER_RESPONSE');
+});
+
 test('calls reject provider rows outside the account or numbers, malformed fields and unsafe pagination',async()=>{
   const good=callRow(1,'2026-10-24T10:00:00Z'),after='2026-10-24T00:00:00Z';
   assert.equal((await calls(serving(single,{calls:[good],next_page_uri:null}),single,{after},NOW)).calls.length,1);
   const bad={
     'another account':{account_sid:`AC${'9'.repeat(32)}`},'wrong SID prefix':{sid:`SM${'1'.repeat(32)}`},'short SID':{sid:'CA123'},
-    'number outside the account':{to:'+15559990000'},'another number':{to:lineB},'non E.164 party':{from:'client:alice'},
+    'number outside the account':{to:'+15559990000'},'another number':{to:lineB},'our own number not E.164':{to:'anonymous'},'outbound own number not E.164':{from:'anonymous',to:remote,direction:'outbound-api'},
     'status':{status:'IN PROGRESS'},'start time':{start_time:'not a date'},'end time':{end_time:'whenever it ended'},'duration':{duration:'-5'},'answered by':{answered_by:'HUMAN!'},
   };
   for(const [name,patch] of Object.entries(bad))
@@ -208,4 +273,15 @@ test('managed service exposes the three reads over the socket, keeps stable erro
   assert.equal(running.store.status().messages,0);assert.equal(running.store.head(),head);
   sim.denied.add('Calls');
   const doctor=await cli(['doctor']);assert.equal(doctor.sms,true);assert.equal(doctor.calls,false);
+});
+
+test('calls say why Twilio failed a call, from its first error notification, and read nothing for other calls',async()=>{
+  const out=(n,status)=>callRow(n,'2026-10-24T10:0'+n+':00Z',{from:lineA,to:remote,direction:'outbound-api',status,duration:'0'});
+  const note=(n,code,log)=>({sid:`NO${String(n).padStart(32,'0')}`,account_sid:accountSid,call_sid:callSid(n),error_code:code,log});
+  const sim=twilio({calls:[out(1,'failed'),out(2,'no-answer'),out(3,'failed'),out(4,'canceled')],
+    notifications:{[callSid(1)]:[note(1,'21212','1'),note(1,'32009','0')]}});
+  const result=await calls(sim.provider(single),single,{after:'2026-10-24T00:00:00.000Z'},NOW);
+  assert.deepEqual(result.calls.map(row=>[row.status,row.errorCode]),[['failed',32009],['no-answer',null],['failed',null],['canceled',null]]);
+  const read=sim.requests.filter(r=>r.pathname.endsWith('/Notifications.json')).map(r=>r.pathname.split('/')[5]);
+  assert.deepEqual(read,[callSid(1),callSid(3)]);
 });

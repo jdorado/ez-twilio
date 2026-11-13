@@ -13,6 +13,14 @@ const orMissing = async work => {
 };
 
 function number(value, what) { try { return phone(value); } catch { throw invalid(what); } }
+// The other party is untrusted descriptive text, not a key: an E.164 number, the word Twilio gives a call whose
+// caller ID is withheld ('anonymous', 'restricted', '+464'), a client or SIP identity, or anything else the network
+// sends. Only our own number must be E.164. No value of it may fail the whole read, or every later call stays
+// unreadable behind one odd row: it is bounded (printable ASCII, 64 characters) and never rejected.
+function party(value) {
+  const text = typeof value === 'string' ? value.replace(/[^\x20-\x7E]/g, '?').trim().slice(0, 64) : '';
+  return text || 'unknown';
+}
 function time(value, what, required = false) {
   if (value === null || value === undefined) { if (required) throw invalid(what); return null; }
   if (typeof value !== 'string' || !/^[A-Za-z0-9 ,:.+-]{10,40}$/.test(value) || !Number.isFinite(Date.parse(value))) throw invalid(what);
@@ -30,14 +38,24 @@ function call(raw, connection, line, inbound) {
   if (!raw || typeof raw !== 'object' || !sid(raw.sid, 'CA') || raw.account_sid !== connection.accountSid ||
       typeof raw.direction !== 'string' || !/^[a-z]{1,16}(?:-[a-z]{1,16}){0,2}$/.test(raw.direction)) throw invalid('call identity');
   if (raw.parent_call_sid || INBOUND.has(raw.direction) !== inbound) return null;
-  const from = number(raw.from, 'call'), to = number(raw.to, 'call');
+  const from = inbound ? party(raw.from) : number(raw.from, 'call');
+  const to = inbound ? number(raw.to, 'call') : party(raw.to);
   if ((inbound ? to : from) !== line) throw fail('PROVIDER_RESPONSE', 'Call is outside the configured numbers');
   const startTime = time(raw.start_time, 'call');
   if (!startTime) return null;
   if (typeof raw.status !== 'string' || !/^[a-z][a-z-]{0,31}$/.test(raw.status) ||
       !(raw.answered_by === null || raw.answered_by === undefined || typeof raw.answered_by === 'string' && /^[a-z_]{1,32}$/.test(raw.answered_by))) throw invalid('call');
   return {sid: raw.sid, accountSid: raw.account_sid, from, to, direction: raw.direction, status: raw.status, startTime,
-    endTime: time(raw.end_time, 'call'), durationSeconds: seconds(raw.duration, 'call'), answeredBy: raw.answered_by ?? null};
+    endTime: time(raw.end_time, 'call'), durationSeconds: seconds(raw.duration, 'call'), answeredBy: raw.answered_by ?? null, errorCode: null};
+}
+
+// Why Twilio failed a call (it never rang): the code of the call's first error notification, e.g.
+// 13224 (not a valid phone number) or 32009 (the carrier refused it); null when Twilio logged none.
+async function failure(provider, callSid) {
+  const page = await provider.page(`${provider.root}/Calls/${callSid}/Notifications.json?PageSize=20`, `Calls/${callSid}/Notifications`, 'notifications');
+  const rows = page.notifications.filter(row => row && row.call_sid === callSid && /^\d{4,6}$/.test(String(row.error_code ?? '')));
+  const error = rows.find(row => String(row.log) === '0') ?? rows[0];
+  return error ? Number(error.error_code) : null;
 }
 
 // Every number in both directions over whole UTC days [lo, hi]; a stream over the page bound is reported, not truncated.
@@ -79,8 +97,13 @@ export async function calls(provider, connection, args, now) {
     if (hi === end || found.size >= limit) break;
     lo = hi + DAY; hi = end;
   }
-  const rows = [...found.values()].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime) || (a.sid < b.sid ? -1 : 1));
-  return {calls: rows.slice(0, limit), complete: hi === end && rows.length <= limit};
+  const rows = [...found.values()].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime) || (a.sid < b.sid ? -1 : 1)).slice(0, limit);
+  // errorCode is an enrichment and must never stop the primary read. A lookup Twilio refuses for good (a key
+  // without Notifications access, the resource removed or changed) leaves it null; a transient failure (timeout,
+  // 5xx, 408, 429) still fails the read, which a consumer retries, so the code is not lost for a passing fault.
+  const refused = error => error?.code === 'PROVIDER_RESPONSE' || (error?.details?.definitive === true && ![408, 429].includes(error.details.httpStatus));
+  for (const row of rows) if (row.status === 'failed') row.errorCode = await failure(provider, row.sid).catch(error => { if (refused(error)) return null; throw error; });
+  return {calls: rows, complete: hi === end && found.size <= limit};
 }
 
 function recording(raw, connection) {

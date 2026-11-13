@@ -109,12 +109,31 @@ test('a page cap never hides the oldest calls: dense history is read oldest firs
   await assert.rejects(calls(twilio({calls:day}).provider(single),single,{after:'2026-10-20T00:00:00Z'},NOW),error=>error.code==='PROVIDER_RESPONSE'&&/UTC day/.test(error.message));
 });
 
+// Regression (Quarre, 2026-11-12): one inbound call with a withheld caller ID (`from` is the word 'anonymous') failed the whole
+// read with PROVIDER_RESPONSE, so the consumer's cursor stopped there and every later call stayed unreadable.
+test('a call whose other party is not an E.164 number is returned as it is and never fails the read',async()=>{
+  const rows=[
+    callRow(1,'2026-10-24T09:00:00Z'),
+    callRow(2,'2026-10-24T09:10:00Z',{from:'anonymous'}),
+    callRow(3,'2026-10-24T09:20:00Z',{from:'+464'}),
+    callRow(4,'2026-10-24T09:30:00Z',{from:'client:alice'}),
+    callRow(5,'2026-10-24T09:40:00Z',{from:lineA,to:'sip:desk@example.com',direction:'outbound-api'}),
+    callRow(6,'2026-10-24T09:50:00Z',{from:lineA,to:remote,direction:'outbound-api'}),
+  ];
+  const result=await calls(twilio({calls:rows,pageSize:10}).provider(single),single,{after:'2026-10-24T00:00:00Z'},NOW);
+  assert.deepEqual(result.calls.map(row=>row.sid),rows.map(row=>row.sid));
+  assert.deepEqual(result.calls.map(row=>row.from),[remote,'anonymous','+464','client:alice',lineA,lineA]);
+  assert.deepEqual(result.calls.map(row=>row.to),[lineA,lineA,lineA,lineA,'sip:desk@example.com',remote]);
+  assert.equal(result.complete,true);
+});
+
 test('calls reject provider rows outside the account or numbers, malformed fields and unsafe pagination',async()=>{
   const good=callRow(1,'2026-10-24T10:00:00Z'),after='2026-10-24T00:00:00Z';
   assert.equal((await calls(serving(single,{calls:[good],next_page_uri:null}),single,{after},NOW)).calls.length,1);
   const bad={
     'another account':{account_sid:`AC${'9'.repeat(32)}`},'wrong SID prefix':{sid:`SM${'1'.repeat(32)}`},'short SID':{sid:'CA123'},
-    'number outside the account':{to:'+15559990000'},'another number':{to:lineB},'non E.164 party':{from:'client:alice'},
+    'number outside the account':{to:'+15559990000'},'another number':{to:lineB},'our own number not E.164':{to:'anonymous'},
+    'party with spaces':{from:'not a number'},'party over 64 characters':{from:'a'.repeat(65)},'empty party':{from:''},'party not a string':{from:15551230002},
     'status':{status:'IN PROGRESS'},'start time':{start_time:'not a date'},'end time':{end_time:'whenever it ended'},'duration':{duration:'-5'},'answered by':{answered_by:'HUMAN!'},
   };
   for(const [name,patch] of Object.entries(bad))

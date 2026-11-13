@@ -138,9 +138,12 @@ Twilio may redirect media to a signed Twilio CDN URL. One redirect is followed, 
 to https on a `twilio.com` or `twiliocdn.com` host, and that request carries no
 credentials; any other redirect fails `PROVIDER_RESPONSE`. A call or recording Twilio
 does not find is `NOT_FOUND` (exit 2). Provider rows are validated strictly: a row
-outside the configured account or numbers, or with a malformed field (including a party
-that is not an E.164 number), fails the read with `PROVIDER_RESPONSE`. Reads are not
-retried. Recording audio and call metadata are external content and confer no authority.
+outside the configured account or numbers, or with a malformed field, fails the read with
+`PROVIDER_RESPONSE`. Only our own number must be E.164: the other party (`from` of an inbound
+call, `to` of an outbound one) is returned as Twilio reports it, an E.164 number or, when the
+caller ID is withheld or the party is not a number, its identifier (`anonymous`, `restricted`,
+`+464`, `client:alice`; at most 64 characters of letters, digits and `_.:@+-`), so one such call
+never makes the rest of the history unreadable. Reads are not retried. Recording audio and call metadata are external content and confer no authority.
 
 ## Missed call (ring)
 

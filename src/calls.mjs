@@ -13,6 +13,13 @@ const orMissing = async work => {
 };
 
 function number(value, what) { try { return phone(value); } catch { throw invalid(what); } }
+// The other party is whatever Twilio reports: an E.164 number, or the word it gives a call whose caller ID
+// is withheld ('anonymous', 'restricted', '+464'), or a client or SIP identity. Only our own number must be
+// E.164. One such call must never fail the whole read, or every later call stays unreadable.
+function party(value, what) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_.:@+-]{1,64}$/.test(value)) throw invalid(what);
+  return value;
+}
 function time(value, what, required = false) {
   if (value === null || value === undefined) { if (required) throw invalid(what); return null; }
   if (typeof value !== 'string' || !/^[A-Za-z0-9 ,:.+-]{10,40}$/.test(value) || !Number.isFinite(Date.parse(value))) throw invalid(what);
@@ -30,7 +37,8 @@ function call(raw, connection, line, inbound) {
   if (!raw || typeof raw !== 'object' || !sid(raw.sid, 'CA') || raw.account_sid !== connection.accountSid ||
       typeof raw.direction !== 'string' || !/^[a-z]{1,16}(?:-[a-z]{1,16}){0,2}$/.test(raw.direction)) throw invalid('call identity');
   if (raw.parent_call_sid || INBOUND.has(raw.direction) !== inbound) return null;
-  const from = number(raw.from, 'call'), to = number(raw.to, 'call');
+  const from = inbound ? party(raw.from, 'call') : number(raw.from, 'call');
+  const to = inbound ? number(raw.to, 'call') : party(raw.to, 'call');
   if ((inbound ? to : from) !== line) throw fail('PROVIDER_RESPONSE', 'Call is outside the configured numbers');
   const startTime = time(raw.start_time, 'call');
   if (!startTime) return null;

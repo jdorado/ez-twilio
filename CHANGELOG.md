@@ -5,7 +5,13 @@
 The `calls` read says why Twilio failed a call: `errorCode`, the code of the call's first error
 notification (for example 13224, not a valid phone number, or 32009, the carrier refused the call),
 read only for a call whose status is `failed` and null otherwise or when Twilio logged none. A
-consumer can then tell a dead or refusing number from a fault on its own side. Nothing else changes.
+consumer can then tell a dead or refusing number from a fault on its own side.
+
+The `calls` read no longer fails when a call's other party is not an E.164 number. An inbound call
+with a withheld caller ID (`from` is `anonymous`, `restricted` or `+464`) made the whole read fail
+with `PROVIDER_RESPONSE`, so a consumer reading from a cursor stopped at that call and could not read
+any later one. The other party is now returned as Twilio reports it (at most 64 characters of
+letters, digits and `_.:@+-`); only our own number must be E.164, as for a text from a short code.
 
 ## 0.1.0-beta.1.rc.11 — unpublished candidate
 

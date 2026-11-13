@@ -32,7 +32,13 @@ export class Provider {
         ...(form ? {body: new URLSearchParams(form).toString()} : {}), signal: AbortSignal.timeout(this.timeout)});
       const raw = await boundedBody(response);
       let value;
-      try { value = JSON.parse(raw); } catch { throw fail('PROVIDER_RESPONSE', 'Provider returned invalid JSON'); }
+      try { value = JSON.parse(raw); } catch {
+        // A read's HTTP status says what happened even when a gateway answers without JSON (a 502 page, an empty
+        // 503): a consumer tells a passing fault from a refusal by it. A write keeps PROVIDER_RESPONSE, whose
+        // outcome stays uncertain: its status is never read from a body that is not Twilio's.
+        if (!response.ok && !form) throw httpFailure(response.status);
+        throw fail('PROVIDER_RESPONSE', 'Provider returned invalid JSON');
+      }
       if (!response.ok) throw httpFailure(response.status, value);
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail('PROVIDER_RESPONSE', 'Invalid provider response');
       return value;

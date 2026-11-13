@@ -147,14 +147,30 @@ test('a notifications lookup Twilio refuses for good leaves errorCode null and n
   const after='2026-10-24T00:00:00Z',codes=result=>result.calls.map(row=>row.errorCode);
   // Refused for good: a key without Notifications access, the resource gone, or a page that is no longer a notifications page.
   for(const [name,answer] of Object.entries({forbidden:()=>Response.json({code:20003,message:'denied'},{status:403}),
-    removed:()=>Response.json({code:20404,message:'gone'},{status:404}),'bad page':()=>Response.json({notifications:'none',next_page_uri:null})})){
+    removed:()=>Response.json({code:20404,message:'gone'},{status:404}),'bad page':()=>Response.json({notifications:'none',next_page_uri:null}),
+    'forbidden without JSON':()=>new Response('<html>Forbidden</html>',{status:403}),'removed without body':()=>new Response('',{status:404})})){
     const result=await calls(serve(answer),single,{after},NOW);
     assert.deepEqual(codes(result),[null,null,null],name);assert.equal(result.calls.length,3,name);
   }
   // A passing fault fails the read so the consumer retries it and the code is not lost for good.
   for(const [name,answer] of Object.entries({'server error':()=>Response.json({},{status:503}),throttled:()=>Response.json({},{status:429}),
-    'request timeout':()=>Response.json({},{status:408}),interrupted:()=>{throw new Error('socket hang up');}}))
+    'request timeout':()=>Response.json({},{status:408}),interrupted:()=>{throw new Error('socket hang up');},
+    // A gateway, CDN or proxy answers in HTML, text or nothing: its status still says it passes.
+    'gateway page':()=>new Response('<html>Bad Gateway</html>',{status:502}),'empty 503':()=>new Response('',{status:503}),
+    'throttled page':()=>new Response('<html>Slow down</html>',{status:429}),'text 500':()=>new Response('upstream error',{status:500})}))
     await assert.rejects(calls(serve(answer),single,{after},NOW),error=>['PROVIDER_HTTP','PROVIDER_UNAVAILABLE'].includes(error.code),name);
+});
+
+test('a read keeps its HTTP status when the answer is not JSON; a write stays PROVIDER_RESPONSE, its outcome uncertain',async()=>{
+  const answer=(body,status)=>new Provider(single,{fetch:async()=>new Response(body,{status})});
+  await assert.rejects(answer('<html>Bad Gateway</html>',502).request(`${root}/Calls.json`),
+    error=>error.code==='PROVIDER_HTTP'&&error.details.httpStatus===502&&error.details.definitive===false);
+  await assert.rejects(answer('',403).request(`${root}/Calls.json`),error=>error.code==='PROVIDER_AUTH'&&error.details.definitive===true);
+  // A write is never judged from a body that is not Twilio's: no `definitive`, so the operation stays uncertain.
+  for(const [body,status] of [['<html>Bad Gateway</html>',502],['',403],['<html>Bad Request</html>',400]])
+    await assert.rejects(answer(body,status).request(`${root}/Messages.json`,{To:remote}),
+      error=>error.code==='PROVIDER_RESPONSE'&&error.details.definitive===undefined,`write ${status}`);
+  await assert.rejects(answer('not json',200).request(`${root}/Calls.json`),error=>error.code==='PROVIDER_RESPONSE');
 });
 
 test('calls reject provider rows outside the account or numbers, malformed fields and unsafe pagination',async()=>{

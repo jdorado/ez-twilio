@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.14 — unpublished candidate
+
+A read keeps its HTTP status when Twilio or a gateway in front of it answers without JSON (a 502 page,
+an empty 503, a 429 page): it is `PROVIDER_HTTP` or `PROVIDER_AUTH` with `httpStatus`, no longer
+`PROVIDER_RESPONSE`, so a consumer tells a passing fault from a refusal. Without it the `errorCode`
+lookup of rc.13 took a gateway fault for a refusal and left the code null for good. A write is
+unchanged: a non-JSON answer to a create stays `PROVIDER_RESPONSE` and its operation `uncertain`.
+
 ## 0.1.0-beta.1.rc.13 — unpublished candidate
 
 Two ways one odd Twilio value could still stop a `calls` read, and with it every later call for a

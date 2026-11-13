@@ -114,7 +114,7 @@ ez twilio recording --sid RE00000000000000000000000000000000 --format mp3
 (default 50): `{calls:[{sid, accountSid, from, to, direction, status, startTime, endTime,
 durationSeconds, answeredBy, errorCode, operation}], complete}`. `direction` and `status` are Twilio's values;
 `errorCode` is why Twilio failed a call that never rang (status `failed`): the code of its first
-error-level notification (else its first notification), such as 13224 (not a valid phone number) or 32009 (the carrier refused it), else null, also when Twilio refuses the lookup for good (a key without Notifications access, the resource removed), which never fails the read; a transient failure of the lookup (timeout, 5xx, 408, 429) does fail it, and a consumer retries;
+error-level notification (else its first notification), such as 13224 (not a valid phone number) or 32009 (the carrier refused it), else null, also when Twilio refuses the lookup for good (a key without Notifications access, the resource removed), which never fails the read; a transient failure of the lookup (timeout, 5xx, 408, 429, also when a gateway answers without JSON) does fail it, and a consumer retries;
 `endTime`, `durationSeconds` and `answeredBy` are null when Twilio has none, and `operation` is
 the key of the ring this plugin placed as that call (null for any other call, and for a ring whose
 outcome is unknown, which has no call id). `complete`

@@ -13,12 +13,13 @@ const orMissing = async work => {
 };
 
 function number(value, what) { try { return phone(value); } catch { throw invalid(what); } }
-// The other party is whatever Twilio reports: an E.164 number, or the word it gives a call whose caller ID
-// is withheld ('anonymous', 'restricted', '+464'), or a client or SIP identity. Only our own number must be
-// E.164. One such call must never fail the whole read, or every later call stays unreadable.
-function party(value, what) {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_.:@+-]{1,64}$/.test(value)) throw invalid(what);
-  return value;
+// The other party is untrusted descriptive text, not a key: an E.164 number, the word Twilio gives a call whose
+// caller ID is withheld ('anonymous', 'restricted', '+464'), a client or SIP identity, or anything else the network
+// sends. Only our own number must be E.164. No value of it may fail the whole read, or every later call stays
+// unreadable behind one odd row: it is bounded (printable ASCII, 64 characters) and never rejected.
+function party(value) {
+  const text = typeof value === 'string' ? value.replace(/[^\x20-\x7E]/g, '?').trim().slice(0, 64) : '';
+  return text || 'unknown';
 }
 function time(value, what, required = false) {
   if (value === null || value === undefined) { if (required) throw invalid(what); return null; }
@@ -37,8 +38,8 @@ function call(raw, connection, line, inbound) {
   if (!raw || typeof raw !== 'object' || !sid(raw.sid, 'CA') || raw.account_sid !== connection.accountSid ||
       typeof raw.direction !== 'string' || !/^[a-z]{1,16}(?:-[a-z]{1,16}){0,2}$/.test(raw.direction)) throw invalid('call identity');
   if (raw.parent_call_sid || INBOUND.has(raw.direction) !== inbound) return null;
-  const from = inbound ? party(raw.from, 'call') : number(raw.from, 'call');
-  const to = inbound ? number(raw.to, 'call') : party(raw.to, 'call');
+  const from = inbound ? party(raw.from) : number(raw.from, 'call');
+  const to = inbound ? number(raw.to, 'call') : party(raw.to);
   if ((inbound ? to : from) !== line) throw fail('PROVIDER_RESPONSE', 'Call is outside the configured numbers');
   const startTime = time(raw.start_time, 'call');
   if (!startTime) return null;
@@ -97,7 +98,11 @@ export async function calls(provider, connection, args, now) {
     lo = hi + DAY; hi = end;
   }
   const rows = [...found.values()].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime) || (a.sid < b.sid ? -1 : 1)).slice(0, limit);
-  for (const row of rows) if (row.status === 'failed') row.errorCode = await failure(provider, row.sid);
+  // errorCode is an enrichment and must never stop the primary read. A lookup Twilio refuses for good (a key
+  // without Notifications access, the resource removed or changed) leaves it null; a transient failure (timeout,
+  // 5xx, 408, 429) still fails the read, which a consumer retries, so the code is not lost for a passing fault.
+  const refused = error => error?.code === 'PROVIDER_RESPONSE' || (error?.details?.definitive === true && ![408, 429].includes(error.details.httpStatus));
+  for (const row of rows) if (row.status === 'failed') row.errorCode = await failure(provider, row.sid).catch(error => { if (refused(error)) return null; throw error; });
   return {calls: rows, complete: hi === end && found.size <= limit};
 }
 

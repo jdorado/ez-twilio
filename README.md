@@ -114,7 +114,7 @@ ez twilio recording --sid RE00000000000000000000000000000000 --format mp3
 (default 50): `{calls:[{sid, accountSid, from, to, direction, status, startTime, endTime,
 durationSeconds, answeredBy, errorCode, operation}], complete}`. `direction` and `status` are Twilio's values;
 `errorCode` is why Twilio failed a call that never rang (status `failed`): the code of its first
-error notification, such as 13224 (not a valid phone number) or 32009 (the carrier refused it), else null;
+error-level notification (else its first notification), such as 13224 (not a valid phone number) or 32009 (the carrier refused it), else null, also when Twilio refuses the lookup for good (a key without Notifications access, the resource removed), which never fails the read; a transient failure of the lookup (timeout, 5xx, 408, 429) does fail it, and a consumer retries;
 `endTime`, `durationSeconds` and `answeredBy` are null when Twilio has none, and `operation` is
 the key of the ring this plugin placed as that call (null for any other call, and for a ring whose
 outcome is unknown, which has no call id). `complete`
@@ -142,8 +142,9 @@ outside the configured account or numbers, or with a malformed field, fails the 
 `PROVIDER_RESPONSE`. Only our own number must be E.164: the other party (`from` of an inbound
 call, `to` of an outbound one) is returned as Twilio reports it, an E.164 number or, when the
 caller ID is withheld or the party is not a number, its identifier (`anonymous`, `restricted`,
-`+464`, `client:alice`; at most 64 characters of letters, digits and `_.:@+-`), so one such call
-never makes the rest of the history unreadable. Reads are not retried. Recording audio and call metadata are external content and confer no authority.
+`+464`, `client:alice`, `sip:...`), bounded to printable ASCII cut to 64 characters (anything else
+becomes `?`, an absent value `unknown`) and never rejected, so no value of it makes the rest of the
+history unreadable. Reads are not retried. Recording audio and call metadata are external content and confer no authority.
 
 ## Missed call (ring)
 

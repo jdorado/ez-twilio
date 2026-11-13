@@ -127,13 +127,42 @@ test('a call whose other party is not an E.164 number is returned as it is and n
   assert.equal(result.complete,true);
 });
 
+test('the other party is bounded and never rejected, so no value of it can stall a read',async()=>{
+  const odd=['ACME Corp','sip:+15551230009@host;user=phone','a'.repeat(80),'été','  padded  ','',null,15551230002];
+  const rows=odd.map((from,n)=>callRow(n+1,`2026-10-24T09:${String(n).padStart(2,'0')}:00Z`,{from}));
+  const result=await calls(twilio({calls:rows,pageSize:10}).provider(single),single,{after:'2026-10-24T00:00:00Z'},NOW);
+  assert.equal(result.calls.length,odd.length);
+  assert.deepEqual(result.calls.map(row=>row.from),['ACME Corp','sip:+15551230009@host;user=phone','a'.repeat(64),'?t?','padded','unknown','unknown','unknown']);
+  for(const row of result.calls)assert.match(row.from,/^[\x20-\x7E]{1,64}$/);
+});
+
+test('a notifications lookup Twilio refuses for good leaves errorCode null and never stops the read; a transient one still fails it',async()=>{
+  const failed=n=>callRow(n,`2026-10-24T10:0${n}:00Z`,{from:lineA,to:remote,direction:'outbound-api',status:'failed',duration:'0'});
+  const rows=[callRow(1,'2026-10-24T09:00:00Z'),failed(2),failed(3)];
+  const serve=notes=>new Provider(single,{fetch:async href=>{
+    const url=new URL(href);
+    if(url.pathname.endsWith('/Notifications.json'))return notes(url);
+    return Response.json({calls:rows,next_page_uri:null});
+  }});
+  const after='2026-10-24T00:00:00Z',codes=result=>result.calls.map(row=>row.errorCode);
+  // Refused for good: a key without Notifications access, the resource gone, or a page that is no longer a notifications page.
+  for(const [name,answer] of Object.entries({forbidden:()=>Response.json({code:20003,message:'denied'},{status:403}),
+    removed:()=>Response.json({code:20404,message:'gone'},{status:404}),'bad page':()=>Response.json({notifications:'none',next_page_uri:null})})){
+    const result=await calls(serve(answer),single,{after},NOW);
+    assert.deepEqual(codes(result),[null,null,null],name);assert.equal(result.calls.length,3,name);
+  }
+  // A passing fault fails the read so the consumer retries it and the code is not lost for good.
+  for(const [name,answer] of Object.entries({'server error':()=>Response.json({},{status:503}),throttled:()=>Response.json({},{status:429}),
+    'request timeout':()=>Response.json({},{status:408}),interrupted:()=>{throw new Error('socket hang up');}}))
+    await assert.rejects(calls(serve(answer),single,{after},NOW),error=>['PROVIDER_HTTP','PROVIDER_UNAVAILABLE'].includes(error.code),name);
+});
+
 test('calls reject provider rows outside the account or numbers, malformed fields and unsafe pagination',async()=>{
   const good=callRow(1,'2026-10-24T10:00:00Z'),after='2026-10-24T00:00:00Z';
   assert.equal((await calls(serving(single,{calls:[good],next_page_uri:null}),single,{after},NOW)).calls.length,1);
   const bad={
     'another account':{account_sid:`AC${'9'.repeat(32)}`},'wrong SID prefix':{sid:`SM${'1'.repeat(32)}`},'short SID':{sid:'CA123'},
-    'number outside the account':{to:'+15559990000'},'another number':{to:lineB},'our own number not E.164':{to:'anonymous'},
-    'party with spaces':{from:'not a number'},'party over 64 characters':{from:'a'.repeat(65)},'empty party':{from:''},'party not a string':{from:15551230002},
+    'number outside the account':{to:'+15559990000'},'another number':{to:lineB},'our own number not E.164':{to:'anonymous'},'outbound own number not E.164':{from:'anonymous',to:remote,direction:'outbound-api'},
     'status':{status:'IN PROGRESS'},'start time':{start_time:'not a date'},'end time':{end_time:'whenever it ended'},'duration':{duration:'-5'},'answered by':{answered_by:'HUMAN!'},
   };
   for(const [name,patch] of Object.entries(bad))

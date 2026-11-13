@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.13 — unpublished candidate
+
+Two ways one odd Twilio value could still stop a `calls` read, and with it every later call for a
+consumer reading by cursor, are closed (review of rc.12). The other party is never rejected: it is
+returned as Twilio reports it, printable ASCII cut to 64 characters (`?` for any other character,
+`unknown` when absent). A `errorCode` lookup that Twilio refuses for good (a key without Notifications
+access, the resource removed or changed) leaves `errorCode` null instead of failing the read; a
+transient failure of it (timeout, 5xx, 408, 429) still fails the read, which a consumer retries.
+`errorCode` is the code of the first error-level notification, else of the first notification.
+
 ## 0.1.0-beta.1.rc.12 — unpublished candidate
 
 The `calls` read says why Twilio failed a call: `errorCode`, the code of the call's first error

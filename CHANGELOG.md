@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.15 — unpublished candidate
+
+The `calls` read asks Twilio for a day with the date filters Twilio applies. It sent `StartTime>=` and
+`StartTime<=`, a spelling Twilio ignores without an error, so a read of one day returned every call the
+line had ever made. A line whose all-time count passed the page bound (500 calls in one direction) then
+failed every read with "One UTC day holds more calls than a read can bound", and a consumer reading by
+cursor never got past it (Quarre, 2026-11-15: the Sharon line's 500th outbound call). The filters are
+now `StartTime>` (from the start of the first day) and `StartTime<` (up to the start of the day after the
+last one), as Twilio documents the operator as a suffix of the name; a day's bound is a day's calls.
+The test simulator honours only that spelling, so a filter Twilio would ignore can no longer pass. The
+text poller's `DateSent>=` / `DateSent<=` is unchanged here.
+
 ## 0.1.0-beta.1.rc.14 — unpublished candidate
 
 A read keeps its HTTP status when Twilio or a gateway in front of it answers without JSON (a 502 page,

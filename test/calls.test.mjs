@@ -26,7 +26,9 @@ const audio = (body, type = 'audio/mpeg') => new Response(body, {status: 200, he
 const serving = (connection, value) => new Provider(connection, {fetch: async () => Response.json(value)});
 const redirect = location => new Response(null, {status: 302, headers: {location}});
 
-// A synthetic Twilio: lists are newest first, date filters are whole UTC days (inclusive), pages are `pageSize` rows.
+// A synthetic Twilio: lists are newest first, pages are `pageSize` rows. A date filter is its operator as a suffix of the
+// name: `StartTime>` keeps calls from the start of that day, `StartTime<` up to the start of that day; any other spelling
+// (`StartTime>=`) is ignored without an error, as Twilio does.
 function twilio({calls: callRows = [], recordings: recRows = [], notifications = {}, media = {}, external, pageSize = 2} = {}) {
   const requests = [], denied = new Set();
   const json = (value, status = 200) => Response.json(value, {status});
@@ -49,7 +51,7 @@ function twilio({calls: callRows = [], recordings: recRows = [], notifications =
     if (path === '/Calls.json') {
       const at = row => row.start_time ? Date.parse(row.start_time) : 0;
       return paged('calls', callRows.filter(row => (!q.has('To') || row.to === q.get('To')) && (!q.has('From') || row.from === q.get('From')) &&
-        (!row.start_time || day(at(row)) >= q.get('StartTime>=') && day(at(row)) <= q.get('StartTime<='))).sort((a, b) => at(b) - at(a)));
+        (!row.start_time || (!q.has('StartTime>') || at(row) >= Date.parse(q.get('StartTime>'))) && (!q.has('StartTime<') || at(row) <= Date.parse(q.get('StartTime<'))))).sort((a, b) => at(b) - at(a)));
     }
     if (path === '/Recordings.json') return json({recordings: recRows.slice(0, 1), next_page_uri: null});
     if ((m = path.match(/^\/Calls\/(CA\w+)\/Recordings\.json$/))) return callRows.some(row => row.sid === m[1]) ? paged('recordings', recRows.filter(row => row.call_sid === m[1])) : missing();
@@ -82,7 +84,7 @@ test('calls merge both directions of every number, keep parent legs only, filter
   const streams=sim.requests.map(request=>`${request.query.has('To')?'To':'From'}=${request.query.get('To')??request.query.get('From')}`);
   for(const stream of [`To=${lineA}`,`From=${lineA}`,`To=${lineB}`,`From=${lineB}`])assert(streams.includes(stream),stream);
   assert(sim.requests.every(request=>request.host==='api.twilio.com'&&request.authorization?.startsWith('Basic ')));
-  assert.equal(sim.requests[0].query.get('StartTime>='),'2026-10-24');
+  assert.equal(sim.requests[0].query.get('StartTime>'),'2026-10-24');assert.equal(sim.requests[0].query.get('StartTime<'),'2026-10-26');
   const limited=await calls(provider,multi,{after,limit:2},NOW);
   assert.deepEqual(limited.calls.map(row=>row.sid),[callSid(1),callSid(4)]);assert.equal(limited.complete,false);
   const exact=await calls(provider,multi,{after,limit:4},NOW);assert.equal(exact.complete,true);
@@ -107,6 +109,23 @@ test('a page cap never hides the oldest calls: dense history is read oldest firs
   // One UTC day over the bound fails instead of returning a list that skips calls.
   const day=Array.from({length:11},(_,n)=>callRow(n+1,`2026-10-24T${String(n).padStart(2,'0')}:00:00Z`));
   await assert.rejects(calls(twilio({calls:day}).provider(single),single,{after:'2026-10-20T00:00:00Z'},NOW),error=>error.code==='PROVIDER_RESPONSE'&&/UTC day/.test(error.message));
+});
+
+// Regression (Quarre, 2026-11-15): Twilio ignores the spelling `StartTime>=` / `StartTime<=`, so a read of one day returned every call
+// the line ever made, and a line whose all-time count passed the page bound stalled the consumer for good although no day was dense.
+test('a long history over many days is read one day at a time: the date filters are the ones Twilio applies',async()=>{
+  const rows=[];let n=0;for(let d=1;d<=10;d++)for(const h of ['09','10','11'])rows.push(callRow(++n,`2026-10-${String(d).padStart(2,'0')}T${h}:00:00Z`));
+  // 30 calls over 10 days against a bound of 10 rows per stream (5 pages of 2): the history is over the bound, every day is under it.
+  const sim=twilio({calls:rows}),provider=sim.provider(single);
+  const result=await calls(provider,single,{after:'2026-10-10T00:00:00.000Z'},NOW);
+  assert.deepEqual(result.calls.map(row=>row.sid),[callSid(28),callSid(29),callSid(30)]);assert.equal(result.complete,true);
+  const listed=sim.requests.filter(request=>request.pathname.endsWith('/Calls.json'));
+  assert(listed.length>0);
+  for(const request of listed){
+    assert(request.query.has('StartTime>')&&request.query.has('StartTime<'),'date filters in the suffix form');
+    assert(!request.query.has('StartTime>=')&&!request.query.has('StartTime<='),'no spelling Twilio ignores');
+  }
+  assert.deepEqual((await calls(provider,single,{after:'2026-10-01T00:00:00.000Z',limit:100},NOW)).calls.map(row=>row.sid),rows.map(row=>row.sid));
 });
 
 // Regression (Quarre, 2026-11-12): one inbound call with a withheld caller ID (`from` is the word 'anonymous') failed the whole

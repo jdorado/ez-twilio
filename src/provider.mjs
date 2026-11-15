@@ -67,9 +67,13 @@ export class Provider {
     if (!sid(messageSid, '(?:SM|MM)')) throw fail('INVALID_INPUT', 'Invalid Message SID');
     return this.request(`${this.root}/Messages/${messageSid}.json`);
   }
+  // Twilio takes a filter's operator as a suffix of its name (`StartTime>`, `StartTime<`) and compares from the start of
+  // the given day. Any other spelling (`StartTime>=`) is ignored without an error: it selected every call a line ever made,
+  // so a long-lived line outgrew the page bound for good. The last day is inclusive, so the upper bound is the day after.
   callsPath(direction, startDate, endDate, number) {
+    const before = new Date(Date.parse(endDate) + 86400000).toISOString().slice(0, 10);
     const query = new URLSearchParams({[direction === 'inbound' ? 'To' : 'From']: sender(this.connection, number),
-      'StartTime>=': startDate, 'StartTime<=': endDate, PageSize: '100'});
+      'StartTime>': startDate, 'StartTime<': before, PageSize: '100'});
     return `${this.root}/Calls.json?${query}`;
   }
   async media(path, limit) {

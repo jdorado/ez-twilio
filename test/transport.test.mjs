@@ -33,7 +33,8 @@ function mock(rows = []) {
   return {
     calls,sent,rows,
     failPage(value) { failure = value; },
-    listPath(direction,start,end,from=sender) { return `/2010-04-01/Accounts/${accountSid}/Messages.json?${new URLSearchParams({[direction==='inbound'?'To':'From']:from,'DateSent>=':start,'DateSent<=':end})}`; },
+    // The real path builder: the mock must never hold a date-filter spelling of its own.
+    listPath(direction,start,end,from=sender) { return new Provider({...connection,senders:[sender,secondSender]}).listPath(direction,start,end,from); },
     async page(path) {
       calls.push(path);
       if (failure) { const error=failure; failure=null; throw error; }
@@ -63,7 +64,7 @@ test('bounded scan resumes every page after restart; overlap captures each messa
   const cursor=reopened.head();
   await transport.sync();
   assert.equal(reopened.head(),cursor); assert.equal(reopened.status().messages,4);
-  assert.match(provider.calls[0],/DateSent%3E%3D=2026-10-20/);
+  assert.match(provider.calls[0],/DateSent%3E=2026-10-20/);assert.match(provider.calls[0],/DateSent%3C=2026-10-26/);
 });
 
 test('a failed page never advances coverage; long outage starts at the unproven boundary',async t=>{
@@ -77,7 +78,49 @@ test('a failed page never advances coverage; long outage starts at the unproven 
   const later=NOW+10*86400000;
   const resumed=new Transport(store,connection,{provider,now:()=>later});
   await resumed.sync();
-  assert.match(provider.calls.at(-2),/DateSent%3E%3D=2026-10-20/);
+  assert.match(provider.calls.at(-2),/DateSent%3E=2026-10-20/);
+});
+
+// A synthetic Twilio for the real Provider: lists are newest first, pages are `pageSize` rows. A date filter is its operator as a
+// suffix of the name: `DateSent>` keeps messages from the start of that day, `DateSent<` those before the start of that day; any
+// other spelling (`DateSent>=`) is ignored without an error, as Twilio does.
+function twilioMessages(rows,pageSize=10) {
+  const requests=[],root=`/2010-04-01/Accounts/${accountSid}`;
+  const at=row=>Date.parse(row.date_sent);
+  async function fetch(href) {
+    const url=new URL(href),q=url.searchParams;
+    requests.push(q);
+    assert.equal(url.pathname,`${root}/Messages.json`);
+    const found=rows.filter(row=>(!q.has('To')||row.to===q.get('To'))&&(!q.has('From')||row.from===q.get('From'))&&
+      (!q.has('DateSent>')||at(row)>=Date.parse(q.get('DateSent>')))&&(!q.has('DateSent<')||at(row)<Date.parse(q.get('DateSent<')))).sort((a,b)=>at(b)-at(a));
+    const page=Number(q.get('Page')??0),next=new URLSearchParams(q);next.set('Page',String(page+1));
+    return Response.json({messages:found.slice(page*pageSize,(page+1)*pageSize),next_page_uri:(page+1)*pageSize<found.length?`${url.pathname}?${next}`:null});
+  }
+  return {requests,provider:new Provider(connection,{fetch})};
+}
+
+// Regression (2026-11-15, a live line): Twilio ignores the spelling `DateSent>=` / `DateSent<=`, so every poll read the whole history
+// of the line, and the cost grew with it. A poll after a complete scan reads the days since its checkpoint, today included.
+test('a poll after a complete scan reads only the recent days: the date filters are the ones Twilio applies',async t=>{
+  const {store}=await fixture(t),history=[];
+  const stamp=iso=>({date_created:new Date(iso).toUTCString(),date_updated:new Date(iso).toUTCString(),date_sent:new Date(iso).toUTCString()});
+  for(let day=0;day<54;day++)history.push(raw(day+1,stamp(Date.parse('2026-09-02T09:00:00Z')+day*86400000)));
+  history.push(outgoing(100,stamp('2026-10-24T09:00:00Z')));
+  const wide={...connection,startAt:'2026-09-01T00:00:00.000Z'},sim=twilioMessages(history);
+  const first=await new Transport(store,wide,{provider:sim.provider,now:()=>NOW}).sync();
+  assert.equal(first.complete,true);assert.equal(first.inspected,55);assert.equal(store.status().messages,55);
+  // A text arrives today, after the first scan: the last day is read whole, so the exclusive upper bound is the day after.
+  history.push(raw(200,stamp('2026-10-25T12:30:00Z')));
+  const poll=await new Transport(store,wide,{provider:sim.provider,now:()=>NOW+3600000}).sync();
+  assert.equal(poll.complete,true);assert.equal(poll.captured,1);assert.equal(store.status().messages,56);
+  assert.equal(poll.inspected,5,'the days since the checkpoint, not the whole history');assert.equal(poll.pages,2);
+  const filtered=sim.requests.filter(query=>query.has('To')||query.has('From'));
+  assert(filtered.length>0);
+  for(const query of filtered){
+    assert(query.has('DateSent>')&&query.has('DateSent<'),'date filters in the suffix form');
+    assert(!query.has('DateSent>=')&&!query.has('DateSent<='),'no spelling Twilio ignores');
+  }
+  assert.equal(sim.requests.at(-1).get('DateSent>'),'2026-10-23');assert.equal(sim.requests.at(-1).get('DateSent<'),'2026-10-26');
 });
 
 test('day-granular reads do not import or quarantine pre-activation redacted history',async t=>{

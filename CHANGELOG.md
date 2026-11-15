@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.16 — unpublished candidate
+
+The text poller asks Twilio for a window of days with the date filters Twilio applies. It sent `DateSent>=`
+and `DateSent<=`, a spelling Twilio ignores without an error, so every poll listed every message the line
+had ever sent or received and the cost of a poll grew with its history. The filters are now `DateSent>`
+(from the start of the first day) and `DateSent<` (before the day after the last one). Read back on a live
+account, `DateSent<` excludes the day it names, like `StartTime<` of the calls read, whatever the Messages
+page says, so the upper bound is the day after the last day. A poll after a complete scan now reads the days
+since its checkpoint; the daily full scan still reads from activation. Coverage and capture are unchanged.
+The test simulator honours only the suffix spelling, so a filter Twilio would ignore can no longer pass.
+
 ## 0.1.0-beta.1.rc.15 — unpublished candidate
 
 The `calls` read asks Twilio for a day with the date filters Twilio applies. It sent `StartTime>=` and

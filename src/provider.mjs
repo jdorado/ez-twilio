@@ -48,9 +48,15 @@ export class Provider {
       throw fail('PROVIDER_UNAVAILABLE', 'Twilio request interrupted; read back the existing operation before retrying', 5);
     }
   }
+  // Twilio takes a filter's operator as a suffix of its name (`DateSent>`, `DateSent<`) and compares from the start of the
+  // given day. `DateSent<` is exclusive in practice (read back on a live account, whatever the Messages page says), like
+  // `StartTime<` of a call read. Any other spelling (`DateSent>=`) is ignored without an error: it selected every message a
+  // line ever sent or received, so each poll walked the whole history. The last day is inclusive here, so the upper bound is
+  // the day after.
   listPath(direction, startDate, endDate, from) {
+    const before = new Date(Date.parse(endDate) + DAY).toISOString().slice(0, 10);
     const query = new URLSearchParams({[direction === 'inbound' ? 'To' : 'From']: sender(this.connection, from),
-      'DateSent>=': startDate, 'DateSent<=': endDate, PageSize: '100'});
+      'DateSent>': startDate, 'DateSent<': before, PageSize: '100'});
     return `${this.root}/Messages.json?${query}`;
   }
   async page(path, resource = 'Messages', field = 'messages') {

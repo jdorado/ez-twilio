@@ -8,7 +8,11 @@ had ever sent or received and the cost of a poll grew with its history. The filt
 (from the start of the first day) and `DateSent<` (before the day after the last one). Read back on a live
 account, `DateSent<` excludes the day it names, like `StartTime<` of the calls read, whatever the Messages
 page says, so the upper bound is the day after the last day. A poll after a complete scan now reads the days
-since its checkpoint; the daily full scan still reads from activation. Coverage and capture are unchanged.
+since its checkpoint (two days back, today included); the daily full scan still reads from activation, so a
+later status change of an older message that this plugin did not send is picked up by it. The plugin's own
+sends are read back by SID in every poll. A date filter matches on the send time: a message with none yet
+(queued or scheduled) is listed once Twilio gives it one. Every message read back on the live account for
+this change had a send time, and the lists of a split day summed exactly to the whole list.
 The test simulator honours only the suffix spelling, so a filter Twilio would ignore can no longer pass.
 
 ## 0.1.0-beta.1.rc.15 — unpublished candidate

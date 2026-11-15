@@ -4,6 +4,7 @@ import {phone, sid, sender, senders} from './validation.mjs';
 const ORIGIN = 'https://api.twilio.com';
 const HANGUP = '<Response><Hangup/></Response>';
 const MEDIA_HOST = /\.(?:twilio|twiliocdn)\.com$/;
+const DAY = 86400000;
 export class Provider {
   constructor(connection, options = {}) {
     this.connection = connection;
@@ -71,7 +72,7 @@ export class Provider {
   // the given day. Any other spelling (`StartTime>=`) is ignored without an error: it selected every call a line ever made,
   // so a long-lived line outgrew the page bound for good. The last day is inclusive, so the upper bound is the day after.
   callsPath(direction, startDate, endDate, number) {
-    const before = new Date(Date.parse(endDate) + 86400000).toISOString().slice(0, 10);
+    const before = new Date(Date.parse(endDate) + DAY).toISOString().slice(0, 10);
     const query = new URLSearchParams({[direction === 'inbound' ? 'To' : 'From']: sender(this.connection, number),
       'StartTime>': startDate, 'StartTime<': before, PageSize: '100'});
     return `${this.root}/Calls.json?${query}`;

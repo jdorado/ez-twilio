@@ -27,7 +27,7 @@ const serving = (connection, value) => new Provider(connection, {fetch: async ()
 const redirect = location => new Response(null, {status: 302, headers: {location}});
 
 // A synthetic Twilio: lists are newest first, pages are `pageSize` rows. A date filter is its operator as a suffix of the
-// name: `StartTime>` keeps calls from the start of that day, `StartTime<` up to the start of that day; any other spelling
+// name: `StartTime>` keeps calls from the start of that day, `StartTime<` those before the start of that day; any other spelling
 // (`StartTime>=`) is ignored without an error, as Twilio does.
 function twilio({calls: callRows = [], recordings: recRows = [], notifications = {}, media = {}, external, pageSize = 2} = {}) {
   const requests = [], denied = new Set();
@@ -51,7 +51,7 @@ function twilio({calls: callRows = [], recordings: recRows = [], notifications =
     if (path === '/Calls.json') {
       const at = row => row.start_time ? Date.parse(row.start_time) : 0;
       return paged('calls', callRows.filter(row => (!q.has('To') || row.to === q.get('To')) && (!q.has('From') || row.from === q.get('From')) &&
-        (!row.start_time || (!q.has('StartTime>') || at(row) >= Date.parse(q.get('StartTime>'))) && (!q.has('StartTime<') || at(row) <= Date.parse(q.get('StartTime<'))))).sort((a, b) => at(b) - at(a)));
+        (!row.start_time || (!q.has('StartTime>') || at(row) >= Date.parse(q.get('StartTime>'))) && (!q.has('StartTime<') || at(row) < Date.parse(q.get('StartTime<'))))).sort((a, b) => at(b) - at(a)));
     }
     if (path === '/Recordings.json') return json({recordings: recRows.slice(0, 1), next_page_uri: null});
     if ((m = path.match(/^\/Calls\/(CA\w+)\/Recordings\.json$/))) return callRows.some(row => row.sid === m[1]) ? paged('recordings', recRows.filter(row => row.call_sid === m[1])) : missing();
@@ -111,7 +111,7 @@ test('a page cap never hides the oldest calls: dense history is read oldest firs
   await assert.rejects(calls(twilio({calls:day}).provider(single),single,{after:'2026-10-20T00:00:00Z'},NOW),error=>error.code==='PROVIDER_RESPONSE'&&/UTC day/.test(error.message));
 });
 
-// Regression (Quarre, 2026-11-15): Twilio ignores the spelling `StartTime>=` / `StartTime<=`, so a read of one day returned every call
+// Regression (2026-11-15, a consumer reading by cursor): Twilio ignores the spelling `StartTime>=` / `StartTime<=`, so a read of one day returned every call
 // the line ever made, and a line whose all-time count passed the page bound stalled the consumer for good although no day was dense.
 test('a long history over many days is read one day at a time: the date filters are the ones Twilio applies',async()=>{
   const rows=[];let n=0;for(let d=1;d<=10;d++)for(const h of ['09','10','11'])rows.push(callRow(++n,`2026-10-${String(d).padStart(2,'0')}T${h}:00:00Z`));

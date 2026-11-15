@@ -148,7 +148,8 @@ test('the service places a ring over its socket, names it in the calls read and 
   t.after(() => rm(directory, {recursive: true, force: true}));
   const socketPath = join(directory, 'service.sock'), provider = mock();
   const startMs = NOW - 20000;
-  provider.callsPath = (direction, from, to, number) => `/2010-04-01/Accounts/${accountSid}/Calls.json?${new URLSearchParams({[direction === 'inbound' ? 'To' : 'From']: number, 'StartTime>=': from, 'StartTime<=': to})}`;
+  // The mock is not a Provider: its path only tells the page stub which direction is asked (From is outbound).
+  provider.callsPath = (direction, from, to, number) => `/2010-04-01/Accounts/${accountSid}/Calls.json?${new URLSearchParams({[direction === 'inbound' ? 'To' : 'From']: number})}`;
   provider.page = async (path, resource, field) => {
     if (resource !== 'Calls') return {messages: [], next: null};
     const outbound = new URL(path, 'https://api.twilio.com').searchParams.has('From');

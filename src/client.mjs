@@ -4,8 +4,8 @@ import {fail} from './errors.mjs';
 export function client(socketPath, command, args = {}) {
   return new Promise((resolve,reject) => {
     const req = request({socketPath, path: '/', method: 'POST', timeout: 30000}, response => {
-      let body = '';
-      response.on('data', chunk => { body += chunk; if (Buffer.byteLength(body) > 4 * 1024 * 1024) req.destroy(); });
+      let body = '', size = 0;
+      response.on('data', chunk => { size += chunk.length; body += chunk; if (size > 96 * 1024 * 1024) req.destroy(); });
       response.on('error', () => reject(fail('SERVICE_UNAVAILABLE', 'Plugin response interrupted; inspect the existing operation for a send or ring', 5)));
       response.on('end', () => {
         try {

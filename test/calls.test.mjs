@@ -212,8 +212,8 @@ test('calls reject provider rows outside the account or numbers, malformed field
 });
 
 test('recordings list is account-bound and recording media is fetched only when completed, bounded and found',async()=>{
-  const mp3=Buffer.from('ID3 synthetic mp3 bytes'),limit=2.5*1024*1024;
-  let pulled=0;const endless=()=>audio(new ReadableStream({pull(controller){if(++pulled>1024)controller.close();else controller.enqueue(new Uint8Array(65536));}}));
+  const mp3=Buffer.from('ID3 synthetic mp3 bytes'),limit=64*1024*1024;
+  let pulled=0;const endless=()=>audio(new ReadableStream({pull(controller){if(++pulled>limit/65536+16)controller.close();else controller.enqueue(new Uint8Array(65536));}}));
   const listed=twilio({calls:[callRow(1,'2026-10-24T10:00:00Z')],recordings:[recRow(1,1,{duration:'61',channels:2}),recRow(2,1,{status:'in-progress',duration:null})]});
   assert.deepEqual(await recordings(listed.provider(),multi,{call:callSid(1)}),{recordings:[
     {sid:recSid(1),callSid:callSid(1),status:'completed',durationSeconds:61,channels:2,source:'DialVerb',createdAt:'2026-10-24T10:01:00.000Z',mediaFormats:['mp3','wav']},
@@ -239,11 +239,11 @@ test('recordings list is account-bound and recording media is fetched only when 
   await assert.rejects(recordingMedia(sim.provider(),multi,{sid:recSid(2)}),error=>error.code==='RECORDING_NOT_COMPLETED'&&error.exitCode===4&&error.details.status==='in-progress');
   assert(sim.requests.every(request=>request.pathname.endsWith('.json')),'no media request for a recording that is not completed');
   await assert.rejects(recordingMedia(sim.provider(),multi,{sid:recSid(9)}),error=>error.code==='NOT_FOUND');
-  // The bound is hard and streamed: a 64 MiB body is cut off after the limit, not buffered.
+  // The bound is hard and streamed: a longer body is cut off after the limit, not buffered.
   await assert.rejects(recordingMedia(sim.provider(),multi,{sid:recSid(3)}),error=>error.code==='RECORDING_TOO_LARGE'&&error.exitCode===4);
   assert(pulled<=limit/65536+3,`read ${pulled} chunks`);
   const edge=await recordingMedia(sim.provider(),multi,{sid:recSid(4)});
-  assert.equal(edge.bytes,limit);assert(JSON.stringify(edge).length<4*1024*1024,'the client accepts up to 4 MiB of reply');
+  assert.equal(edge.bytes,limit);assert(JSON.stringify(edge).length<96*1024*1024,'the client accepts up to 96 MiB of reply');
   await assert.rejects(recordingMedia(sim.provider(),multi,{sid:recSid(5)}),error=>error.code==='PROVIDER_RESPONSE'&&/non-audio/.test(error.message));
   await assert.rejects(recordingMedia(sim.provider(),multi,{sid:recSid(6)}),error=>error.code==='PROVIDER_RESPONSE'&&/empty/.test(error.message));
 });
@@ -272,7 +272,7 @@ test('recording media follows one redirect to a Twilio host without credentials 
 test('managed service exposes the three reads over the socket, keeps stable error codes, reports calls access and journals nothing',async t=>{
   const directory=await mkdtemp(join(tmpdir(),'ez-twilio-calls-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const sim=twilio({calls:[callRow(1,'2026-10-24T10:00:00Z'),callRow(2,'2026-10-24T11:00:00Z',{to:lineB})],recordings:[recRow(1,1),recRow(2,1)],
-    media:{[recSid(1)]:()=>audio('wav bytes','audio/x-wav'),[recSid(2)]:()=>audio(new Uint8Array(2.5*1024*1024+1))}});
+    media:{[recSid(1)]:()=>audio('wav bytes','audio/x-wav'),[recSid(2)]:()=>audio(new Uint8Array(64*1024*1024+1))}});
   const socketPath=join(directory,'service.sock');
   const running=await serve({directory,socketPath,provider:connection=>new Provider(connection,{fetch:sim.fetch}),now:()=>NOW});t.after(()=>running.close());
   const cli=(args,stdin)=>main(args,{socketPath,stdin:Readable.from([JSON.stringify(stdin??{})])});

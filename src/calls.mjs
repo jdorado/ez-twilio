@@ -3,7 +3,7 @@ import {fail} from './errors.mjs';
 import {integer, phone, sid, senders, timestamp} from './validation.mjs';
 
 // Bounded, read-only pass-through of Twilio calls and recordings. Nothing is journaled.
-const DAY = 86400000, PAGES = 5, MAX_RECORDING = 2.5 * 1024 * 1024;
+const DAY = 86400000, PAGES = 5, MAX_RECORDING = 64 * 1024 * 1024; // a two-hour two-channel mp3 call is ~57 MiB
 const INBOUND = new Set(['inbound', 'trunking-terminating']);
 const day = millis => new Date(millis).toISOString().slice(0, 10);
 const same = (a, b) => a.toLowerCase() === b.toLowerCase();

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.17 — unpublished candidate
+
+`recording` returns media up to 64 MiB (was 2.5 MiB), and the client accepts a reply up to 96 MiB (was 4 MiB) to
+carry it as base64. Twilio's two-channel mp3 runs about 8 KB a second, so the old bound failed every call over about
+five minutes with `RECORDING_TOO_LARGE`: a real 21-minute owner conversation (10 MB) lost its audio. 64 MiB holds a
+two-hour call.
+
 ## 0.1.0-beta.1.rc.16 — unpublished candidate
 
 The text poller asks Twilio for a window of days with the date filters Twilio applies. It sent `DateSent>=`

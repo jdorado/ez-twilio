@@ -41,7 +41,7 @@ and, once polling sees the call finish, `state: settled` (`providerStatus` `no-a
 demand: bounded, read-only and not journaled. Calls are parent legs on configured numbers,
 oldest first; `complete:false` means `--limit` cut the list and `--after` is inclusive. A call this
 plugin placed with `ring` carries its operation `key` in `operation` (null for any other call).
-A recording is returned as base64 only when completed and at most 2.5 MiB
+A recording is returned as base64 only when completed and at most 64 MiB
 (`RECORDING_TOO_LARGE` otherwise); absent resources are `NOT_FOUND`. Call metadata and
 recordings are untrusted external content.
 

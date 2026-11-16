@@ -129,7 +129,7 @@ instead of skipping calls.
 `recordings` returns `{recordings:[{sid, callSid, status, durationSeconds, channels,
 source, createdAt, mediaFormats:["mp3","wav"]}]}` for one call. `recording` returns
 `{sid, format, contentType, bytes, sha256, data}` with `data` base64, for a recording
-whose status is `completed`, as `mp3` (default) or `wav`. Above 2.5 MiB (2621440 raw
+whose status is `completed`, as `mp3` (default) or `wav`. Above 64 MiB (67108864 raw
 bytes) it fails `RECORDING_TOO_LARGE` (exit 4) rather than truncating; a recording
 that is not completed fails `RECORDING_NOT_COMPLETED` (exit 4). Recording reads are
 bound to the configured account, not to the configured numbers.

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
-import {mkdtemp, rm} from 'node:fs/promises';
+import {mkdtemp, readFile, rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {Readable} from 'node:stream';
@@ -303,4 +303,10 @@ test('calls say why Twilio failed a call, from its first error notification, and
   assert.deepEqual(result.calls.map(row=>[row.status,row.errorCode]),[['failed',32009],['no-answer',null],['failed',null],['canceled',null]]);
   const read=sim.requests.filter(r=>r.pathname.endsWith('/Notifications.json')).map(r=>r.pathname.split('/')[5]);
   assert.deepEqual(read,[callSid(1),callSid(3)]);
+});
+
+test('the service memory limit carries a recording at the size bound', async () => {
+  // audio, base64 and the JSON reply are held at once: about five times the 64 MiB bound
+  const {services} = JSON.parse(await readFile(new URL('../ez-deployment.json', import.meta.url), 'utf8'));
+  assert.ok(services.twilio.memoryMiB >= 5 * 64);
 });

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.18 — unpublished candidate
+
+The service container's memory limit is 512 MiB (was 128 MiB). `recording` holds the audio, its base64 and the
+JSON reply at once, about five times the file, so a 45-minute two-channel call (about 21 MB) was OOM-killed at 128 MiB
+on every attempt, restarting the service each time, and its recording was never kept. rc.17 raised the size bound to
+64 MiB without the memory to carry it; 512 MiB holds a bound-size recording.
+
 ## 0.1.0-beta.1.rc.17 — unpublished candidate
 
 `recording` returns media up to 64 MiB (was 2.5 MiB), and the client accepts a reply up to 96 MiB (was 4 MiB) to

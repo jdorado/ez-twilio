@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.19 — unpublished candidate
+
+A client that gives up while a recording is being sent no longer leaves the spool file or its open handle behind, and a
+disk error while the media is spooling fails that call instead of the service.
+
 ## 0.1.0-beta.1.rc.18 — unpublished candidate
 
 `recording` no longer holds the audio in memory. The service held the file, its base64 and the JSON reply at once,

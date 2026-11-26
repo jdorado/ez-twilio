@@ -1,3 +1,4 @@
+import {once} from 'node:events';
 import {createServer} from 'node:http';
 import {createReadStream} from 'node:fs';
 import {mkdir, readFile, open, rename, rm, unlink, chmod} from 'node:fs/promises';
@@ -13,13 +14,16 @@ import {fail, publicError} from './errors.mjs';
 // pieces join into one valid string), so the reply never exists in memory whole.
 async function sendMedia(response, media) {
   const {file, ...fields} = media;
+  const gone = new Promise(resolve => response.once('close', resolve)); // a client that gave up never drains
+  const source = createReadStream(file, {highWaterMark: 192 * 1024});
   try {
     response.write(`{"ok":true,"data":${JSON.stringify(fields).slice(0, -1)},"data":"`);
-    for await (const piece of createReadStream(file, {highWaterMark: 192 * 1024})) {
-      if (!response.write(piece.toString('base64'))) await new Promise(resolve => response.once('drain', resolve));
+    for await (const piece of source) {
+      if (response.destroyed) break;
+      if (!response.write(piece.toString('base64'))) await Promise.race([once(response, 'drain'), gone]);
     }
-    response.end('"}}');
-  } finally { await unlink(file).catch(() => {}); }
+    if (!response.destroyed) response.end('"}}');
+  } finally { source.destroy(); await unlink(file).catch(() => {}); }
 }
 
 export async function serve(options = {}) {
@@ -32,10 +36,10 @@ export async function serve(options = {}) {
   const writer = new DatabaseSync(join(directory, '.writer.sqlite'), {timeout: 0});
   try { writer.exec('BEGIN EXCLUSIVE; CREATE TABLE IF NOT EXISTS writer (id INTEGER);'); }
   catch { writer.close(); throw fail('ALREADY_RUNNING', 'Another plugin service owns this profile'); }
-  // Spooled recordings are removed once sent; a crash can leave one, and only the profile's writer clears them.
-  await rm(mediaDirectory, {recursive: true, force: true});
   let store, server;
   try {
+  // Spooled recordings are removed once sent; a crash can leave one, and only the profile's writer clears them.
+  await rm(mediaDirectory, {recursive: true, force: true});
   store = new Store(directory);
   let transport, timer, closed = false, errors = 0, writingBackup = false, initializing = false;
   const active = new Set();
@@ -141,7 +145,10 @@ export async function serve(options = {}) {
       try { data = await operation; } finally { active.delete(operation); }
       if (data?.file) await sendMedia(response, data);
       else response.end(JSON.stringify({ok: true, data}));
-    } catch (error) { response.statusCode = 400; response.end(JSON.stringify({ok: false, error: publicError(error)})); }
+    } catch (error) {
+      if (response.headersSent) { response.destroy(); return; } // a reply already begun cannot carry an error
+      response.statusCode = 400; response.end(JSON.stringify({ok: false, error: publicError(error)}));
+    }
   });
   server.requestTimeout = 15000;
   // Only the profile's exclusive writer can remove its old socket.

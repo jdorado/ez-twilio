@@ -153,17 +153,19 @@ async function spoolBytes(response, limit, directory, overflow) {
   await mkdir(directory, {recursive: true, mode: 0o700});
   const file = join(directory, `${randomUUID()}.part`), out = createWriteStream(file, {mode: 0o600}), hash = createHash('sha256');
   let bytes = 0;
+  const failed = new Promise((_, reject) => out.on('error', reject)); // a disk error between waits is still this call's failure
+  failed.catch(() => {});
   try {
     for (;;) {
-      const {done, value} = await reader.read();
+      const {done, value} = await Promise.race([reader.read(), failed]);
       if (done) break;
       bytes += value.byteLength;
       if (bytes > limit) { await reader.cancel(); throw overflow(); }
       hash.update(value);
-      if (!out.write(value)) await once(out, 'drain');
+      if (!out.write(value)) await Promise.race([once(out, 'drain'), failed]);
     }
     out.end();
-    await once(out, 'finish');
+    await Promise.race([once(out, 'finish'), failed]);
     return {file, bytes, sha256: hash.digest('hex')};
   } catch (error) {
     await new Promise(resolve => { out.once('close', resolve); out.destroy(); }); // closed before it is removed: an open still pending would recreate it

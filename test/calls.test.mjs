@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {mkdtemp, readdir, readFile, rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
+import {request} from 'node:http';
 import {Readable} from 'node:stream';
 import {Provider} from '../src/provider.mjs';
 import {calls, recordings, recordingMedia as spooled} from '../src/calls.mjs';
@@ -324,5 +325,20 @@ test('the service streams a long recording from a file and leaves no spool behin
   assert.equal(media.bytes,long.length);assert.equal(media.sha256,createHash('sha256').update(long).digest('hex'));
   assert(Buffer.from(media.data,'base64').equals(long));
   await assert.rejects(cli(['recording','--sid',recSid(2)]),error=>error.code==='RECORDING_TOO_LARGE');
+  assert.deepEqual(await readdir(join(directory,'media')),[]);
+});
+
+test('a client that disconnects while a recording is sent leaves no spool file',async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'ez-twilio-gone-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const sim=twilio({recordings:[recRow(1,1)],media:{[recSid(1)]:()=>audio(Buffer.alloc(48*1024*1024,5))}});
+  const socketPath=join(directory,'service.sock');
+  const running=await serve({directory,socketPath,provider:connection=>new Provider(connection,{fetch:sim.fetch}),now:()=>NOW});t.after(()=>running.close());
+  const cli=(args,stdin)=>main(args,{socketPath,stdin:Readable.from([JSON.stringify(stdin??{})])});
+  await cli(['init'],{accountSid,authToken:'2'.repeat(32),senders:[lineA,lineB],startAt});
+  await new Promise(resolve=>{
+    const req=request({socketPath,path:'/',method:'POST'},response=>{response.once('data',()=>{req.destroy();resolve();});response.pause();response.resume();});
+    req.on('error',()=>{});req.end(JSON.stringify({command:'recording',args:{sid:recSid(1)}}));
+  });
+  for(let i=0;i<100&&(await readdir(join(directory,'media'))).length;i++)await new Promise(resolve=>setTimeout(resolve,50));
   assert.deepEqual(await readdir(join(directory,'media')),[]);
 });

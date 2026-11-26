@@ -1,5 +1,7 @@
+import {once} from 'node:events';
 import {createServer} from 'node:http';
-import {mkdir, readFile, open, rename, unlink, chmod} from 'node:fs/promises';
+import {createReadStream} from 'node:fs';
+import {mkdir, readFile, open, rename, rm, unlink, chmod} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {Store} from './store.mjs';
@@ -8,10 +10,27 @@ import {calls, readable, recordingMedia, recordings} from './calls.mjs';
 import {config, integer, key, senders} from './validation.mjs';
 import {fail, publicError} from './errors.mjs';
 
+// A recording reply is built as it is sent: base64 of the spooled file in 192 KiB pieces (a multiple of 3, so the
+// pieces join into one valid string), so the reply never exists in memory whole.
+async function sendMedia(response, media) {
+  const {file, ...fields} = media;
+  const gone = new Promise(resolve => response.once('close', resolve)); // a client that gave up never drains
+  const source = createReadStream(file, {highWaterMark: 192 * 1024});
+  try {
+    response.write(`{"ok":true,"data":${JSON.stringify(fields).slice(0, -1)},"data":"`);
+    for await (const piece of source) {
+      if (response.destroyed) break;
+      if (!response.write(piece.toString('base64'))) await Promise.race([once(response, 'drain'), gone]);
+    }
+    if (!response.destroyed) response.end('"}}');
+  } finally { source.destroy(); await unlink(file).catch(() => {}); }
+}
+
 export async function serve(options = {}) {
   const directory = options.directory ?? '/state/twilio', socketPath = options.socketPath ?? '/plugins/twilio/service.sock';
   const connectionFile = join(directory, 'connection.json');
   await mkdir(directory, {recursive: true, mode: 0o700});
+  const mediaDirectory = join(directory, 'media');
   // A held SQLite lock is released by the OS on SIGKILL/container death. There
   // is no PID-file lease to expire or stale lock to delete after a restart.
   const writer = new DatabaseSync(join(directory, '.writer.sqlite'), {timeout: 0});
@@ -19,6 +38,8 @@ export async function serve(options = {}) {
   catch { writer.close(); throw fail('ALREADY_RUNNING', 'Another plugin service owns this profile'); }
   let store, server;
   try {
+  // Spooled recordings are removed once sent; a crash can leave one, and only the profile's writer clears them.
+  await rm(mediaDirectory, {recursive: true, force: true});
   store = new Store(directory);
   let transport, timer, closed = false, errors = 0, writingBackup = false, initializing = false;
   const active = new Set();
@@ -95,7 +116,7 @@ export async function serve(options = {}) {
       return {...result, calls: result.calls.map(row => ({...row, operation: store.operationKey(row.sid)}))};
     }
     if (command === 'recordings') return recordings(current.provider, current.connection, args);
-    if (command === 'recording') return recordingMedia(current.provider, current.connection, args);
+    if (command === 'recording') return recordingMedia(current.provider, current.connection, args, mediaDirectory);
     if (command === 'send') return current.send(args);
     if (command === 'ring') return current.ring(args);
     if (command === 'events-head') return {cursor: store.head(), accountId: current.accountId(), taskProtocol: 'message-v1', persistentWatch: true, releaseEvents: true};
@@ -122,8 +143,12 @@ export async function serve(options = {}) {
       active.add(operation);
       let data;
       try { data = await operation; } finally { active.delete(operation); }
-      response.end(JSON.stringify({ok: true, data}));
-    } catch (error) { response.statusCode = 400; response.end(JSON.stringify({ok: false, error: publicError(error)})); }
+      if (data?.file) await sendMedia(response, data);
+      else response.end(JSON.stringify({ok: true, data}));
+    } catch (error) {
+      if (response.headersSent) { response.destroy(); return; } // a reply already begun cannot carry an error
+      response.statusCode = 400; response.end(JSON.stringify({ok: false, error: publicError(error)}));
+    }
   });
   server.requestTimeout = 15000;
   // Only the profile's exclusive writer can remove its old socket.

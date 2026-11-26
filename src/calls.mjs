@@ -1,4 +1,4 @@
-import {createHash} from 'node:crypto';
+import {unlink} from 'node:fs/promises';
 import {fail} from './errors.mjs';
 import {integer, phone, sid, senders, timestamp} from './validation.mjs';
 
@@ -123,7 +123,8 @@ export async function recordings(provider, connection, args) {
   return {recordings: rows};
 }
 
-export async function recordingMedia(provider, connection, args) {
+// The audio stays in a file (`file`, with its size and digest): the service streams it as base64 and removes it.
+export async function recordingMedia(provider, connection, args, directory) {
   const format = args.format ?? 'mp3';
   if (!sid(args.sid, 'RE')) throw fail('INVALID_INPUT', 'Invalid Recording SID');
   if (!['mp3', 'wav'].includes(format)) throw fail('INVALID_INPUT', 'Use mp3 or wav');
@@ -131,9 +132,9 @@ export async function recordingMedia(provider, connection, args) {
   const row = recording(await orMissing(provider.request(`${provider.root}/Recordings/${args.sid}.json`)), connection);
   if (!same(row.sid, args.sid)) throw fail('PROVIDER_RESPONSE', 'Recording readback returned another SID');
   if (row.status !== 'completed') throw fail('RECORDING_NOT_COMPLETED', 'Only a completed recording can be fetched', 4, {status: row.status});
-  const {contentType, bytes} = await orMissing(provider.media(`${provider.root}/Recordings/${args.sid}.${format}`, MAX_RECORDING));
-  if (!bytes.length) throw fail('PROVIDER_RESPONSE', 'Provider returned empty recording media');
-  return {sid: row.sid, format, contentType, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), data: bytes.toString('base64')};
+  const {contentType, file, bytes, sha256} = await orMissing(provider.media(`${provider.root}/Recordings/${args.sid}.${format}`, MAX_RECORDING, directory));
+  if (!bytes) { await unlink(file).catch(() => {}); throw fail('PROVIDER_RESPONSE', 'Provider returned empty recording media'); }
+  return {sid: row.sid, format, contentType, bytes, sha256, file};
 }
 
 // Read access only: a bounded list per resource. A denied key reports false and never fails SMS diagnostics.

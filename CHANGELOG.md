@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-beta.1.rc.19 — unpublished candidate
+
+A client that gives up while a recording is being sent no longer leaves the spool file or its open handle behind, and a
+disk error while the media is spooling fails that call instead of the service.
+
+## 0.1.0-beta.1.rc.18 — unpublished candidate
+
+`recording` no longer holds the audio in memory. The service held the file, its base64 and the JSON reply at once,
+about five times the audio, so a 45-minute two-channel call (about 21 MB) was OOM-killed in the 128 MiB container on
+every attempt, restarting the service each time, and its recording was never kept; rc.17 had raised the size bound to
+64 MiB without the memory to carry it. The audio is now written to a file under the profile as it downloads (size and
+digest computed on the way), then sent as base64 in pieces, and the file is removed; the service clears leftovers
+when it starts. The reply is the same JSON. The download has 25 s (was 12 s for any request) to finish inside the 30 s
+a client waits. A deployment change (a larger memory limit) would need a reviewed updater migration, so none is made.
+
 ## 0.1.0-beta.1.rc.17 — unpublished candidate
 
 `recording` returns media up to 64 MiB (was 2.5 MiB), and the client accepts a reply up to 96 MiB (was 4 MiB) to

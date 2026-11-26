@@ -1,16 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
-import {mkdtemp, readFile, rm} from 'node:fs/promises';
+import {mkdtemp, readdir, readFile, rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {Readable} from 'node:stream';
 import {Provider} from '../src/provider.mjs';
-import {calls, recordings, recordingMedia} from '../src/calls.mjs';
+import {calls, recordings, recordingMedia as spooled} from '../src/calls.mjs';
 import {serve} from '../src/service.mjs';
 import {main} from '../src/cli.mjs';
 import {config} from '../src/validation.mjs';
 
+// recordingMedia leaves the audio in a file for the service to stream: read it back as the reply a client gets.
+async function recordingMedia(...args) {
+  const {file, ...reply} = await spooled(...args);
+  const data = (await readFile(file)).toString('base64');
+  await rm(file);
+  return {...reply, data};
+}
 const NOW = Date.parse('2026-10-25T12:00:00.000Z');
 const accountSid = `AC${'1'.repeat(32)}`, lineA = '+15551230001', lineB = '+15551230003', remote = '+15551230002';
 const startAt = '2026-10-01T00:00:00.000Z', root = `/2010-04-01/Accounts/${accountSid}`;
@@ -305,8 +312,17 @@ test('calls say why Twilio failed a call, from its first error notification, and
   assert.deepEqual(read,[callSid(1),callSid(3)]);
 });
 
-test('the service memory limit carries a recording at the size bound', async () => {
-  // audio, base64 and the JSON reply are held at once: about five times the 64 MiB bound
-  const {services} = JSON.parse(await readFile(new URL('../ez-deployment.json', import.meta.url), 'utf8'));
-  assert.ok(services.twilio.memoryMiB >= 5 * 64);
+test('the service streams a long recording from a file and leaves no spool behind, a failed one included',async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'ez-twilio-long-'));t.after(()=>rm(directory,{recursive:true,force:true}));
+  const long=Buffer.alloc(24*1024*1024+1,9); // not a multiple of 3: the pieces of base64 must still join
+  const sim=twilio({recordings:[recRow(1,1),recRow(2,1)],media:{[recSid(1)]:()=>audio(long),[recSid(2)]:()=>audio(new Uint8Array(64*1024*1024+1))}});
+  const socketPath=join(directory,'service.sock');
+  const running=await serve({directory,socketPath,provider:connection=>new Provider(connection,{fetch:sim.fetch}),now:()=>NOW});t.after(()=>running.close());
+  const cli=(args,stdin)=>main(args,{socketPath,stdin:Readable.from([JSON.stringify(stdin??{})])});
+  await cli(['init'],{accountSid,authToken:'2'.repeat(32),senders:[lineA,lineB],startAt});
+  const media=await cli(['recording','--sid',recSid(1)]);
+  assert.equal(media.bytes,long.length);assert.equal(media.sha256,createHash('sha256').update(long).digest('hex'));
+  assert(Buffer.from(media.data,'base64').equals(long));
+  await assert.rejects(cli(['recording','--sid',recSid(2)]),error=>error.code==='RECORDING_TOO_LARGE');
+  assert.deepEqual(await readdir(join(directory,'media')),[]);
 });

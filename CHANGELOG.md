@@ -2,10 +2,13 @@
 
 ## 0.1.0-beta.1.rc.18 — unpublished candidate
 
-The service container's memory limit is 512 MiB (was 128 MiB). `recording` holds the audio, its base64 and the
-JSON reply at once, about five times the file, so a 45-minute two-channel call (about 21 MB) was OOM-killed at 128 MiB
-on every attempt, restarting the service each time, and its recording was never kept. rc.17 raised the size bound to
-64 MiB without the memory to carry it; 512 MiB holds a bound-size recording.
+`recording` no longer holds the audio in memory. The service held the file, its base64 and the JSON reply at once,
+about five times the audio, so a 45-minute two-channel call (about 21 MB) was OOM-killed in the 128 MiB container on
+every attempt, restarting the service each time, and its recording was never kept; rc.17 had raised the size bound to
+64 MiB without the memory to carry it. The audio is now written to a file under the profile as it downloads (size and
+digest computed on the way), then sent as base64 in pieces, and the file is removed; the service clears leftovers
+when it starts. The reply is the same JSON. The download has 25 s (was 12 s for any request) to finish inside the 30 s
+a client waits. A deployment change (a larger memory limit) would need a reviewed updater migration, so none is made.
 
 ## 0.1.0-beta.1.rc.17 — unpublished candidate
 

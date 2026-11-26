@@ -1,3 +1,9 @@
+import {createHash, randomUUID} from 'node:crypto';
+import {createWriteStream} from 'node:fs';
+import {mkdir, unlink} from 'node:fs/promises';
+import {once} from 'node:events';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {fail} from './errors.mjs';
 import {phone, sid, sender, senders} from './validation.mjs';
 
@@ -10,6 +16,7 @@ export class Provider {
     this.connection = connection;
     this.fetch = options.fetch ?? fetch;
     this.timeout = options.timeout ?? 12000;
+    this.mediaTimeout = options.mediaTimeout ?? 25000; // a whole recording's body, inside the 30 s a client waits
     this.root = `/2010-04-01/Accounts/${connection.accountSid}`;
   }
   authorization() {
@@ -83,13 +90,15 @@ export class Provider {
       'StartTime>': startDate, 'StartTime<': before, PageSize: '100'});
     return `${this.root}/Calls.json?${query}`;
   }
-  async media(path, limit) {
+  // The audio is written to a file under `directory` as it arrives, with its size and digest: a recording is never
+  // held in memory, so a long call costs the service disk, not the memory its container is limited to.
+  async media(path, limit, directory = join(tmpdir(), 'ez-twilio-media')) {
     // Twilio may redirect recording media to a signed Twilio CDN URL. Allow one hop,
     // only to https on a Twilio host, and send no credentials to it.
     let url = this.resource(path), redirected = false;
     try {
       for (;;) {
-        const response = await this.fetch(url.href, {method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(this.timeout),
+        const response = await this.fetch(url.href, {method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(this.mediaTimeout),
           headers: redirected ? {} : {Authorization: this.authorization()}});
         if (response.status >= 300 && response.status < 400) {
           await response.body?.cancel();
@@ -102,7 +111,7 @@ export class Provider {
         if (!response.ok) { await response.body?.cancel(); throw httpFailure(response.status); }
         const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
         if (!/^audio\/[a-z0-9.+-]{1,64}$/.test(contentType)) { await response.body?.cancel(); throw fail('PROVIDER_RESPONSE', 'Provider returned non-audio media'); }
-        return {contentType, bytes: await boundedBytes(response, limit, () => fail('RECORDING_TOO_LARGE', `Recording exceeds the ${limit} byte limit`, 4, {limit}))};
+        return {contentType, ...await spoolBytes(response, limit, directory, () => fail('RECORDING_TOO_LARGE', `Recording exceeds the ${limit} byte limit`, 4, {limit}))};
       }
     } catch (error) {
       if (error?.exitCode) throw error;
@@ -138,6 +147,30 @@ export class Provider {
   }
 }
 
+async function spoolBytes(response, limit, directory, overflow) {
+  const reader = response.body?.getReader();
+  if (!reader) throw fail('PROVIDER_RESPONSE', 'Provider response body missing');
+  await mkdir(directory, {recursive: true, mode: 0o700});
+  const file = join(directory, `${randomUUID()}.part`), out = createWriteStream(file, {mode: 0o600}), hash = createHash('sha256');
+  let bytes = 0;
+  try {
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > limit) { await reader.cancel(); throw overflow(); }
+      hash.update(value);
+      if (!out.write(value)) await once(out, 'drain');
+    }
+    out.end();
+    await once(out, 'finish');
+    return {file, bytes, sha256: hash.digest('hex')};
+  } catch (error) {
+    await new Promise(resolve => { out.once('close', resolve); out.destroy(); }); // closed before it is removed: an open still pending would recreate it
+    await unlink(file).catch(() => {});
+    throw error;
+  } finally { reader.releaseLock(); }
+}
 const boundedBody = async response => new TextDecoder().decode(await boundedBytes(response, 2 * 1024 * 1024, () => fail('PROVIDER_RESPONSE', 'Provider response exceeds size limit')));
 async function boundedBytes(response, limit, overflow) {
   let bytes = 0;

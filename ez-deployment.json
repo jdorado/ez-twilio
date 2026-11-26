@@ -7,7 +7,7 @@
       "command": ["node", "/app/bin/ez-twilio.mjs", "serve"],
       "environment": {"EZ_TWILIO_SERVICE": "1"},
       "healthcheck": ["node", "/app/bin/ez-twilio.mjs", "health"],
-      "memoryMiB": 512
+      "memoryMiB": 128
     }
   },
   "commands": {"twilio": {"service": "twilio", "argv": ["node", "/app/bin/ez-twilio.mjs"]}},
